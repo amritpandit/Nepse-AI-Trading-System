@@ -67,6 +67,7 @@ class YonepseMarketDataService:
         cache_seconds: int | None = None,
         stale_after_minutes: int | None = None,
         delayed_after_minutes: int = 1440,
+        enabled: bool | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self.base_url = (base_url or settings.yonepse_base_url).rstrip("/")
@@ -80,6 +81,7 @@ class YonepseMarketDataService:
             else stale_after_minutes
         )
         self.delayed_after_minutes = delayed_after_minutes
+        self.enabled = settings.yonepse_enabled if enabled is None else enabled
         self._client = client
         self._cache: dict[str, Any] | None = None
         self._cache_until = 0.0
@@ -98,7 +100,7 @@ class YonepseMarketDataService:
         self, *, now: datetime | None = None, force_refresh: bool = False
     ) -> dict[str, Any]:
         """Return latest normalized market data and an explicit freshness label."""
-        if not settings.yonepse_enabled:
+        if not self.enabled:
             raise MarketDataUnavailable("YONEPSE market feed is disabled")
 
         # Use the cache only for normal requests; tests and operators can force a refresh.
