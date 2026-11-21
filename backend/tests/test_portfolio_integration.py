@@ -238,3 +238,38 @@ def test_portfolio_id_cannot_be_read_by_another_user(client, db_session) -> None
 
     response = client.get(f"/portfolio/account/snapshot?portfolio_id={other_account.id}")
     assert response.status_code == 404
+
+def test_portfolio_falls_back_to_cost_basis_when_market_feed_is_stale(
+    client, monkeypatch
+) -> None:
+    from app.services.persistent_portfolio import persistent_portfolio_service
+
+    monkeypatch.setattr(
+        persistent_portfolio_service,
+        "_live_quotes",
+        lambda positions: (
+            {},
+            {
+                "source": "YONEPSE",
+                "as_of": "2026-11-18T15:00:00+05:45",
+                "freshness": "stale",
+            },
+        ),
+    )
+    created = client.post(
+        "/portfolio/account",
+        json={"name": "Stale Price Test", "initial_capital": 10000.0},
+    )
+    portfolio_id = created.json()["portfolio_id"]
+    bought = client.post(
+        f"/portfolio/account/trade?portfolio_id={portfolio_id}",
+        json={"symbol": "NABIL", "action": "BUY", "quantity": 10, "price": 100.0},
+    )
+    assert bought.status_code == 200
+
+    snapshot = client.get(f"/portfolio/account/snapshot?portfolio_id={portfolio_id}")
+    assert snapshot.status_code == 200
+    position = snapshot.json()["positions"]["NABIL"]
+    assert position["current_price"] == 100.0
+    assert position["market_value"] == 1000.0
+    assert snapshot.json()["market_data_freshness"] == "stale"
