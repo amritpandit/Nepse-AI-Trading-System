@@ -25,6 +25,7 @@ from views import (
     ml_models,
     mlops,
     paper_trading,
+    portfolio,
     signals,
     strategies,
     system_status,
@@ -235,6 +236,7 @@ PAGES = {
     "📈 Signals": signals.page_signals,
     "📡 Live Signals": live_signals.page_live_signals,
     "📝 Paper Trading": paper_trading.page_paper_trading,
+    "💼 Portfolio": portfolio.page_portfolio,
     "🧮 Factor Analysis": factor_analysis.page_factor_analysis,
     "🔧 Features": features.page_features,
     "🗄️ Data Sources": data_sources.page_data_sources,
@@ -254,6 +256,7 @@ PAGE_ICONS = [
     "bar-chart",
     "broadcast",
     "journal-text",
+    "briefcase",
     "diagram-3",
     "gear",
     "hdd-network",
@@ -303,7 +306,7 @@ def main():
         st.caption("AI Trading System")
         st.divider()
 
-        # Search filter (§3.1): narrow the flat 15-page menu by label substring.
+        # Search filter (§3.1): narrow the flat 16-page menu by label substring.
         query = st.text_input("Search pages", key="nav_search", placeholder="🔍 Filter pages…")
         labels, icons = list(PAGES.keys()), PAGE_ICONS
         if query:
