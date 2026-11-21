@@ -138,7 +138,7 @@ class PersistentPortfolioService:
     def snapshot(self, db: Session, account: PortfolioAccount) -> dict[str, Any]:
         positions = self._positions(db, account.id)
         quotes, market_meta = self._live_quotes(positions)
-        position_data: dict[str, dict[str, float]] = {}
+        position_data: dict[str, dict[str, float | str]] = {}
         positions_value = ZERO
 
         for position in positions:
