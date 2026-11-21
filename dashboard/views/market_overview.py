@@ -75,6 +75,15 @@ def page_market_overview():
             f"Market source: {source} · Data as of: {as_of} · Feed status: {str(freshness).upper()}. "
             "Unofficial third-party feed; verify important prices independently."
         )
+        market_open = overview_data.get("market_is_open")
+        market_state = (
+            "OPEN" if market_open is True else "CLOSED" if market_open is False else "UNKNOWN"
+        )
+        st.caption(
+            f"Provider market status: {market_state} · "
+            f"Last checked: {overview_data.get('market_status_checked_at') or 'not reported'}"
+        )
+        st.markdown("[YONEPSE source repository](https://github.com/Shubhamnpk/yonepse)")
         if freshness == "stale":
             st.warning("Market data is stale. Do not use these prices as current quotes.")
         elif freshness == "delayed":
