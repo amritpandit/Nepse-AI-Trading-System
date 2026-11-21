@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = "file:./mlruns"
     mlflow_experiment_prefix: str = ""
 
+    # Public read-only NEPSE market snapshots (unofficial third-party aggregator).
+    # This feed is used for display/research only; it never places trades.
+    yonepse_enabled: bool = True
+    yonepse_base_url: str = "https://raw.githubusercontent.com/Shubhamnpk/yonepse/main"
+    yonepse_timeout_seconds: int = Field(default=8, ge=2, le=30)
+    yonepse_cache_seconds: int = Field(default=60, ge=0, le=600)
+    yonepse_stale_after_minutes: int = Field(default=90, ge=1, le=1440)
+
     calendarific_api_key: str = ""
     calendarific_country: str = "NP"
     # When True, only national/public holidays close the market (Calendarific
