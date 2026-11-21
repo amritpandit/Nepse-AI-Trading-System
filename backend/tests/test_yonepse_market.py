@@ -106,6 +106,7 @@ def test_market_feed_rejects_unavailable_endpoint() -> None:
 
     service = YonepseMarketDataService(
         base_url="https://feed.test",
+        enabled=True,
         cache_seconds=0,
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
