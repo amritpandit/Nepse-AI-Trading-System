@@ -1,5 +1,5 @@
-from typing import Annotated, Literal
 import logging
+from typing import Annotated, Literal
 
 import sqlalchemy as sa
 from app.core.security import get_current_user
@@ -15,7 +15,7 @@ from app.services.yonepse_market import (
     MarketDataUnavailable,
     yonepse_market_data,
 )
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -95,8 +95,6 @@ def get_live_market(
         snapshot = yonepse_market_data.get_snapshot()
     except MarketDataUnavailable as exc:
         logger.warning("YONEPSE market snapshot unavailable: %s", exc)
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=503, detail="Market data feed is temporarily unavailable") from exc
 
     rows = snapshot["stocks"]
