@@ -1,7 +1,7 @@
 """Add is_trading_day column to holiday_calendar
 
 Revision ID: 0011_add_is_trading_day
-Revises: 0010_add_provider_quota_updated_count
+Revises: 0010_provider_quota_count
 Create Date: 2026-06-17
 
 """
@@ -9,7 +9,7 @@ Create Date: 2026-06-17
 from alembic import op
 
 revision = "0011_add_is_trading_day"
-down_revision = "0010_add_provider_quota_updated_count"
+down_revision = "0010_provider_quota_count"
 branch_labels = None
 depends_on = None
 
