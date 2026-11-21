@@ -55,6 +55,7 @@ def test_provider_status_reports_no_secrets() -> None:
     assert fred["has_key"] is True
     assert fred["usable"] is True
 
+
 def test_secret_key_accepts_documented_secret_key_name() -> None:
     cfg = Settings(_env_file=None, SECRET_KEY="secret-a")  # type: ignore[call-arg]
     assert cfg.secret_key == "secret-a"
