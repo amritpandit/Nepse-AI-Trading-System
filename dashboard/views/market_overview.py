@@ -10,6 +10,7 @@ from common import (
     _safe_float,
     get_daily_quality_report,
     get_trust_score,
+    load_live_market,
     load_market_overview,
 )
 
@@ -37,7 +38,7 @@ def page_market_overview():
                 f"{nse_value:,.2f}" if isinstance(nse_value, int | float) else "N/A",
                 delta=f"{nse_change:+.2f}%" if isinstance(nse_change, int | float) else None,
                 delta_color="inverse",
-                help="Live index data will appear once a verified NEPSE index feed is connected.",
+                help="Index snapshot from the attributed YONEPSE third-party feed; cross-check important figures with NEPSE.",
             )
 
         with col2:
@@ -53,7 +54,7 @@ def page_market_overview():
                 "Total Volume",
                 _format_currency(overview_data.get("total_volume", 0)),
                 delta=f"{vol_change:+.1f}%" if isinstance(vol_change, int | float) else None,
-                help=f"Aggregated for {overview_data.get('market_data_date') or 'the latest available trading date'} in the database.",
+                help=f"Aggregated from the market feed for {overview_data.get('market_data_date') or 'the latest available trading date'}.",
             )
 
         with col4:
@@ -65,6 +66,80 @@ def page_market_overview():
             )
     else:
         st.info("Market overview unavailable. Ensure backend is running.")
+
+    source = overview_data.get("market_data_source")
+    freshness = overview_data.get("market_data_freshness", "unavailable")
+    as_of = overview_data.get("market_data_date") or "timestamp unavailable"
+    if source:
+        st.caption(
+            f"Market source: {source} · Data as of: {as_of} · Feed status: {str(freshness).upper()}. "
+            "Unofficial third-party feed; verify important prices independently."
+        )
+        if freshness == "stale":
+            st.warning("Market data is stale. Do not use these prices as current quotes.")
+        elif freshness == "delayed":
+            st.info("The latest available market snapshot is delayed; the market may have closed.")
+    else:
+        st.warning("Live market feed is unavailable. The index is shown as N/A rather than estimated.")
+
+    st.subheader("🔎 Market Screener")
+    screener_col1, screener_col2 = st.columns([2, 1])
+    with screener_col1:
+        market_search = st.text_input(
+            "Search by company or symbol",
+            placeholder="e.g. NABIL, Hydro, Bank",
+            key="market_screener_search",
+        )
+    with screener_col2:
+        sort_labels = {
+            "Turnover": "turnover",
+            "Trading Volume": "volume",
+            "Daily Change (%)": "percent_change",
+            "Market Capitalization": "market_cap",
+            "Last Traded Price": "ltp",
+        }
+        selected_sort = st.selectbox(
+            "Rank stocks by", list(sort_labels), key="market_screener_sort"
+        )
+
+    live_market = load_live_market(
+        search=market_search,
+        sort_by=sort_labels[selected_sort],
+        order="desc",
+        limit=500,
+    )
+    live_rows = live_market.get("stocks", []) if isinstance(live_market, dict) else []
+    if live_rows:
+        live_df = pd.DataFrame(live_rows)
+        display_columns = [
+            column
+            for column in [
+                "symbol",
+                "name",
+                "ltp",
+                "change",
+                "percent_change",
+                "volume",
+                "turnover",
+                "trades",
+                "last_updated",
+            ]
+            if column in live_df.columns
+        ]
+        st.dataframe(
+            live_df[display_columns],
+            use_container_width=True,
+            hide_index=True,
+            height=420,
+        )
+        st.caption(
+            f"Showing {len(live_rows)} of {live_market.get('total_results', len(live_rows))} matching "
+            "listed stocks. Sort values are based on the latest available provider snapshot."
+        )
+    elif isinstance(live_market, dict):
+        st.info("No stocks matched the search.")
+    else:
+        st.warning("Stock screener data is unavailable. Check the backend market feed.")
 
     st.divider()
 
