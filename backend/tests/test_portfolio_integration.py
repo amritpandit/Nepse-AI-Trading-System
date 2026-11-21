@@ -1,5 +1,7 @@
 # backend/tests/test_portfolio_integration.py
 
+from decimal import Decimal
+
 
 def test_portfolio_account_creation_and_trade(client):
     """Test creating a portfolio account and executing trades."""
