@@ -294,6 +294,26 @@ def load_market_overview() -> dict | None:
         return None
 
 
+def load_live_market(
+    *,
+    search: str | None = None,
+    sort_by: str = "turnover",
+    order: str = "desc",
+    limit: int = 500,
+) -> dict | None:
+    """Load the latest public NEPSE market snapshot and screened stock rows."""
+    try:
+        params = {"sort_by": sort_by, "order": order, "limit": limit}
+        if search and search.strip():
+            params["search"] = search.strip()
+        res = requests.get(f"{API_BASE}/market/live", params=params, timeout=20)
+        res.raise_for_status()
+        data = res.json()
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
+
+
 def get_trust_score(symbol: str, date_str: str) -> dict | None:
     """Get data quality trust score for a symbol/date."""
     try:
