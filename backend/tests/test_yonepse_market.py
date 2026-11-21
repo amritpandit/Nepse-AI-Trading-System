@@ -65,6 +65,7 @@ def _mock_client() -> httpx.Client:
 def test_market_snapshot_normalizes_data_and_attributes_source() -> None:
     service = YonepseMarketDataService(
         base_url="https://feed.test",
+        enabled=True,
         cache_seconds=0,
         client=_mock_client(),
     )
@@ -86,6 +87,7 @@ def test_market_snapshot_normalizes_data_and_attributes_source() -> None:
 def test_market_snapshot_marks_old_data_as_stale() -> None:
     service = YonepseMarketDataService(
         base_url="https://feed.test",
+        enabled=True,
         stale_after_minutes=90,
         cache_seconds=0,
         client=_mock_client(),
