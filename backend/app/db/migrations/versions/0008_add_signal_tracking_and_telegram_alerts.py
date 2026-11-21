@@ -12,7 +12,7 @@ from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
 revision = "0008_signal_telegram_alerts"
-down_revision = "0007_add_benchmark_and_trade_fields"
+down_revision = "0007_benchmark_trade_fields"
 branch_labels = None
 depends_on = None
 
