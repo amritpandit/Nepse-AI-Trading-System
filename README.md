@@ -239,6 +239,15 @@ licensed, but that does not independently establish licensing or redistribution 
 underlying market-data source. The dashboard retains provider attribution and advises independent
 verification.
 
+### Saved Personal Portfolios
+
+Authenticated users can create multiple named paper portfolios. Account balances, holdings and
+transaction history are stored in PostgreSQL and scoped to the owning user. The
+`0015_add_user_portfolios` migration creates the required tables; apply it with
+`alembic upgrade head` before using the persistent portfolio API. Portfolio BUY/SELL entries
+are records for research and tracking only: they do not submit orders to a broker or the exchange.
+Current valuations use the YONEPSE feed when available and disclose its timestamp and freshness.
+
 Configuration is available in `.env.example`:
 `YONEPSE_ENABLED`, `YONEPSE_BASE_URL`, `YONEPSE_TIMEOUT_SECONDS`,
 `YONEPSE_CACHE_SECONDS`, and `YONEPSE_STALE_AFTER_MINUTES`.
