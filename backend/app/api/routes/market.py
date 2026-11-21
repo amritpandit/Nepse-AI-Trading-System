@@ -95,7 +95,10 @@ def get_live_market(
         snapshot = yonepse_market_data.get_snapshot()
     except MarketDataUnavailable as exc:
         logger.warning("YONEPSE market snapshot unavailable: %s", exc)
-        raise HTTPException(status_code=503, detail="Market data feed is temporarily unavailable") from exc
+        raise HTTPException(
+            status_code=503,
+            detail="Market data feed is temporarily unavailable",
+        ) from exc
 
     rows = snapshot["stocks"]
     if symbol:
@@ -110,7 +113,11 @@ def get_live_market(
 
     rows = sorted(
         rows,
-        key=lambda row: row.get(sort_by) if row.get(sort_by) is not None else float("-inf"),
+        key=lambda row: (
+            row.get(sort_by)
+            if row.get(sort_by) is not None
+            else (float("-inf") if order == "desc" else float("inf"))
+        ),
         reverse=order == "desc",
     )
     return {
@@ -152,6 +159,7 @@ def get_market_overview(db: DbSession) -> dict:
         "market_data_date": market_data_date or (latest_date.isoformat() if latest_date else None),
         "market_data_freshness": snapshot.get("freshness") if snapshot else "unavailable",
         "market_data_source": snapshot.get("source") if snapshot else None,
+        "market_data_source_url": snapshot.get("source_url") if snapshot else None,
         "market_data_attribution": snapshot.get("attribution") if snapshot else None,
         "active_signals": 0,
         "new_signals_today": 0,
