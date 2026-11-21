@@ -40,6 +40,8 @@ class PersistentPortfolioService:
         clean_name = name.strip()
         if not clean_name:
             raise ValueError("Portfolio name is required")
+        if len(clean_name) > 100:
+            raise ValueError("Portfolio name must be 100 characters or fewer")
         if initial_capital <= ZERO:
             raise ValueError("Initial capital must be greater than zero")
 
