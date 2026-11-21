@@ -47,6 +47,7 @@ def test_price_unique_constraint_is_enforced(db_session) -> None:
     with pytest.raises(IntegrityError):
         db_session.commit()
 
+
 def test_live_market_route_searches_and_sorts_provider_rows(client, monkeypatch) -> None:
     import app.api.routes.market as market_routes
 
