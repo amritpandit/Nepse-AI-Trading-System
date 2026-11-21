@@ -224,6 +224,25 @@ sources to OHLCV (Merolagani floor-sheet ticks are aggregated per symbol), merge
 `(symbol, date)`, and upserts into `prices`. Symbols must already exist in `stocks` (seed first);
 unresolved symbols are skipped and reported. Omit `symbol` from the request to ingest all symbols.
 
+### Public NEPSE Market Snapshot
+
+The market dashboard can read a public, read-only snapshot from [YONEPSE](https://github.com/Shubhamnpk/yonepse).
+The integration exposes `GET /market/live` for stock search and ranking and uses the same feed for
+the NEPSE index on the market overview page. The feed is unofficial and aggregated from NEPSE and
+other credited sources; it is not an exchange-certified real-time feed. The provider documents
+hourly refreshes during market hours and a short CDN cache. Check the returned `as_of` timestamp
+and `freshness` value before relying on a quote. Stale or delayed prices must not be presented as
+current market quotes.
+
+The feed is read-only and is not copied into the platform database. Its repository code is MIT
+licensed, but that does not independently establish licensing or redistribution rights for every
+underlying market-data source. The dashboard retains provider attribution and advises independent
+verification.
+
+Configuration is available in `.env.example`:
+`YONEPSE_ENABLED`, `YONEPSE_BASE_URL`, `YONEPSE_TIMEOUT_SECONDS`,
+`YONEPSE_CACHE_SECONDS`, and `YONEPSE_STALE_AFTER_MINUTES`.
+
 ### Database Migrations
 
 ```bash
@@ -259,7 +278,8 @@ The REST API exposes auth, market data, features, data quality, strategies/backt
 | GET | `/metrics` | Prometheus metrics (request counts, latency histogram) |
 | POST | `/auth/register` | Register a new user |
 | POST | `/auth/login` | Login and receive access token |
-| GET | `/market/prices` | List price data with optional symbol filter |
+| GET | `/market/prices` | List stored price data with optional symbol filter |
+| GET | `/market/live` | Read-only YONEPSE market snapshot; supports symbol/company search, sorting, and limits |
 | POST | `/market/ingest` | Ingest a single price record for a stock |
 | POST | `/market/ingest/batch` | Batch ingest OHLCV data for a date range |
 | POST | `/features/generate` | Compute features for a single symbol/date |
