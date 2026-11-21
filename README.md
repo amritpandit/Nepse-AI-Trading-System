@@ -311,7 +311,12 @@ The REST API exposes auth, market data, features, data quality, strategies/backt
 | GET | `/ml/models` | List trained models |
 | GET | `/ml/predict/{symbol}` | Get model prediction for a symbol |
 | POST | `/portfolio/account` | Create/reset a portfolio account |
-| GET | `/portfolio/account/snapshot` | Portfolio snapshot (equity, cash, positions) |
+| GET | `/portfolio/accounts` | List the current user's saved paper portfolios |
+| POST | `/portfolio/account` | Create a named, persistent paper portfolio |
+| GET | `/portfolio/account/snapshot` | Portfolio snapshot (equity, cash, positions); optional `portfolio_id` |
+| GET | `/portfolio/account/allocation` | Current cash and holdings allocation; optional `portfolio_id` |
+| GET | `/portfolio/account/transactions` | Persisted transaction history; optional `portfolio_id` |
+| POST | `/portfolio/account/trade` | Record a manual paper trade; optional `portfolio_id` |
 | POST | `/portfolio/optimize` | Optimize allocation (equal / risk-parity / mean-variance) |
 | GET | `/explain/models/{model_id}/importance` | Global feature importance (SHAP + fallbacks) |
 | POST | `/explain/models/{model_id}/predict` | Local attribution + trade explanation |
