@@ -1,6 +1,6 @@
 """add trust_version to data_trust and features, event_overrides, source_correlations
 
-Revision ID: 0006_add_trust_version_and_event_features
+Revision ID: 0006_trust_event_features
 Revises: 0005_add_trust_score_to_features
 Create Date: 2026-06-06
 
@@ -9,7 +9,7 @@ Create Date: 2026-06-06
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0006_add_trust_version_and_event_features"
+revision = "0006_trust_event_features"
 down_revision = "0005_add_trust_score_to_features"
 branch_labels = None
 depends_on = None
