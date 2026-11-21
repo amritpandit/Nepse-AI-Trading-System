@@ -267,7 +267,7 @@ class PersistentPortfolioService:
         db.refresh(account)
 
         return {
-            "message": f"{normalized_action} trade recorded successfully",
+            "message": f"{normalized_action} order recorded successfully in paper portfolio",
             "portfolio_id": account.id,
             "portfolio_name": account.name,
             "symbol": normalized_symbol,
