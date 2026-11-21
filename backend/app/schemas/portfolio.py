@@ -63,7 +63,7 @@ class TradeRequest(BaseModel):
     action: str
     quantity: PositiveFloat
     price: PositiveFloat
-    fees: float = 0.0
+    fees: NonNegativeFloat = 0.0
 
     @classmethod
     def model_validate(cls, obj: object, *args, **kwargs):  # type: ignore[override]
