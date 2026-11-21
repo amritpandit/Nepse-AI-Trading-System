@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0003_ingest_source_duration"
-down_revision = "0002_add_data_sources_and_ingestion_logs"
+down_revision = "0002_data_sources_logs"
 branch_labels = None
 depends_on = None
 
