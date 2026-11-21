@@ -25,6 +25,7 @@ from views import (
     ml_models,
     mlops,
     paper_trading,
+    portfolio,
     signals,
     strategies,
     system_status,
@@ -235,6 +236,7 @@ PAGES = {
     "📈 Signals": signals.page_signals,
     "📡 Live Signals": live_signals.page_live_signals,
     "📝 Paper Trading": paper_trading.page_paper_trading,
+    "💼 Portfolio": portfolio.page_portfolio,
     "🧮 Factor Analysis": factor_analysis.page_factor_analysis,
     "🔧 Features": features.page_features,
     "🗄️ Data Sources": data_sources.page_data_sources,
@@ -254,6 +256,7 @@ PAGE_ICONS = [
     "bar-chart",
     "broadcast",
     "journal-text",
+    "briefcase",
     "diagram-3",
     "gear",
     "hdd-network",
@@ -277,23 +280,40 @@ def main():
     # Login for authenticated endpoints
     if not st.session_state.auth_token:
         with st.sidebar:
-            st.caption("🔐 Authentication")
-            email = st.text_input("Email", value="test@example.com", key="auth_email")
-            password = st.text_input("Password", type="password", key="auth_pass")
-            if st.button("Login", key="auth_login"):
+            st.caption("🔐 Account")
+            auth_mode = st.radio(
+                "Choose an action",
+                ["Login", "Create account"],
+                horizontal=True,
+                key="auth_mode",
+            )
+            email = st.text_input("Email", key="auth_email")
+            password = st.text_input(
+                "Password",
+                type="password",
+                key="auth_pass",
+                help="Use at least 8 characters when creating an account.",
+            )
+            if st.button(auth_mode, key="auth_submit"):
+                endpoint = "/auth/register" if auth_mode == "Create account" else "/auth/login"
                 try:
                     res = requests.post(
-                        f"{API_BASE}/auth/login",
-                        json={"email": email, "password": password},
+                        f"{API_BASE}{endpoint}",
+                        json={"email": email.strip(), "password": password},
                         timeout=10,
                     )
-                    if res.status_code == 200:
+                    if res.status_code in (200, 201):
                         st.session_state.auth_token = res.json().get("access_token", "")
-                        st.success("Logged in!")
+                        st.success("Account ready. You are logged in.")
+                        st.rerun()
                     else:
-                        st.error("Login failed")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                        try:
+                            detail = res.json().get("detail", "Authentication failed")
+                        except (ValueError, AttributeError):
+                            detail = "Authentication failed"
+                        st.error(str(detail))
+                except requests.RequestException as exc:
+                    st.error(f"Could not connect to the backend: {exc}")
 
     # Navigation menu
     with st.sidebar:
@@ -303,7 +323,7 @@ def main():
         st.caption("AI Trading System")
         st.divider()
 
-        # Search filter (§3.1): narrow the flat 15-page menu by label substring.
+        # Search filter (§3.1): narrow the flat 16-page menu by label substring.
         query = st.text_input("Search pages", key="nav_search", placeholder="🔍 Filter pages…")
         labels, icons = list(PAGES.keys()), PAGE_ICONS
         if query:

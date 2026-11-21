@@ -18,6 +18,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 # running in CI/test, which would make the MLflow client retry for minutes and
 # block backtest requests. Tests must not depend on an external tracking server.
 os.environ["MLFLOW_ENABLED"] = "false"
+os.environ["YONEPSE_ENABLED"] = "false"
 
 from collections.abc import Generator  # noqa: E402
 
@@ -93,16 +94,20 @@ def client(db_session):
 
     test_app = create_app()
 
+    test_user = User(
+        id="test-user",
+        email="test@example.com",
+        hashed_password="x",
+        role="researcher",
+    )
+    db_session.add(test_user)
+    db_session.commit()
+
     def override_get_db():
         yield db_session
 
     def override_get_current_user():
-        return User(
-            id="test-user",
-            email="test@example.com",
-            hashed_password="x",
-            role="researcher",
-        )
+        return test_user
 
     test_app.dependency_overrides[get_db] = override_get_db
     test_app.dependency_overrides[get_current_user] = override_get_current_user

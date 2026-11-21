@@ -3,7 +3,7 @@
 A professional-grade Streamlit dashboard for the NEPSE AI Trading System. The entry
 point (`dashboard/app.py`) is a thin shell that owns page config, styling,
 authentication, navigation, and routing; each page lives in its own module under
-`dashboard/views/`. The app ships 15 pages:
+`dashboard/views/`. The app ships 16 pages:
 
 - Market Overview
 - Strategies
@@ -11,6 +11,7 @@ authentication, navigation, and routing; each page lives in its own module under
 - Signals
 - Live Signals
 - Paper Trading
+- Portfolio
 - Factor Analysis
 - Features
 - Data Sources
@@ -23,9 +24,18 @@ authentication, navigation, and routing; each page lives in its own module under
 
 ## 🎯 Features
 
+### 💼 Portfolio
+
+- Create multiple named, persistent portfolios with separate starting cash balances
+- Track holdings, cash, allocation, estimated equity and unrealized P&L
+- Record paper BUY/SELL transactions and export transaction history
+- Portfolio accounts and holdings are saved in PostgreSQL and scoped to the authenticated user
+- Market valuation uses the attributed YONEPSE feed when available and discloses delayed or unavailable prices
+- Paper portfolio entries do not place orders with a broker
+
 ### 📊 Market Overview
 
-- **Real-time market metrics**: NSE index, trading volume, active signals
+- **Source-attributed market snapshot**: NEPSE index, trading volume, listed stocks and data freshness
 - **Data quality dashboard**: Completeness, validation pass rate, trust scores
 - **Per-symbol analysis**: Detailed trust scores and quality components
 - **Comprehensive reports**: Daily quality reports with symbol-by-symbol breakdown
@@ -152,6 +162,7 @@ dashboard/
     ├── signals.py
     ├── live_signals.py
     ├── paper_trading.py
+    ├── portfolio.py
     ├── factor_analysis.py
     ├── features.py
     ├── data_sources.py
@@ -182,7 +193,7 @@ dashboard/
 - [`dashboard/views/`](./views): One module per page. Each exposes a single
   `page_<name>()` render function and imports what it needs from `common`. New
   pages added here: `live_signals.py` (signal snapshot with websocket fallback),
-  `paper_trading.py` (paper accounts, order entry, trade history), and
+  `paper_trading.py` (broker-simulation paper accounts), `portfolio.py` (saved personal holdings and ledger), and
   `factor_analysis.py` (factor analysis on uploaded/pasted returns).
 
 ## 📋 Page Structure
@@ -244,14 +255,19 @@ Header: 🧪 Backtest & Analysis
 
 ## 🔧 API Integration
 
-Across its 15 pages the dashboard consumes the backend routers: `market`,
+Across its 16 pages the dashboard consumes the backend routers: `market`,
 `data-quality`, `features`, `signals`, `strategies`, `portfolio`, `analytics`,
 `alerts`, `mlops`, `explainability`/governance, and `health`. Core endpoints used
 by the primary pages:
 
 ### Market Data
 
-- `GET /market/overview` → Market metrics and status
+- `GET /market/overview` → Market metrics and status, including feed freshness
+- `GET /market/live` → Read-only YONEPSE stock snapshot with search and ranking
+- `GET /market/live` → Public stock search and ranking snapshot
+- `GET /portfolio/accounts` → Saved portfolios for the authenticated user
+- `POST /portfolio/account` → Create a persistent portfolio
+- `GET/POST /portfolio/account/*` → Snapshot, allocation, transaction history and paper trades
 - `GET /data-quality/trust/{symbol}/{date}` → Per-symbol trust score
 - `POST /data-quality/reports/daily` → Comprehensive quality report
 - `GET /signals/heatmap/{date}` → Signal distribution

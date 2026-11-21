@@ -1,4 +1,4 @@
-"""Portfolio optimization and account management API routes."""
+"""Portfolio optimization and persistent paper account API routes."""
 
 import logging
 from decimal import Decimal
@@ -16,7 +16,11 @@ from app.schemas.portfolio import (
     TradeRequest,
     TransactionResponse,
 )
-from app.services.portfolio_account import PortfolioAccountService, Position
+from app.services.persistent_portfolio import (
+    PortfolioAccountConflict,
+    PortfolioNotFound,
+    persistent_portfolio_service,
+)
 from app.services.portfolio_optimization import (
     OptimizationConstraints,
     portfolio_optimization_service,
@@ -28,29 +32,32 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
-# In-memory storage for portfolio accounts (in production, this would be in database)
-# For simplicity, we'll store one portfolio per user session
-_portfolio_accounts: dict[str, PortfolioAccountService] = {}
+
+def _account_or_404(db: Session, user_id: str, portfolio_id: int | None):
+    try:
+        return persistent_portfolio_service.get_account(
+            db, user_id=user_id, portfolio_id=portfolio_id
+        )
+    except PortfolioNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def _get_or_create_portfolio_account(user_id: str) -> PortfolioAccountService:
-    """Get or create portfolio account for a user."""
-    if user_id not in _portfolio_accounts:
-        _portfolio_accounts[user_id] = PortfolioAccountService()
-        logger.info(f"Created new portfolio account for user {user_id}")
-    return _portfolio_accounts[user_id]
-
-
-def _position_to_dict(position: Position) -> dict:
-    """Convert Position object to dictionary for JSON serialization."""
-    return {
-        "symbol": position.symbol,
-        "quantity": float(position.quantity),
-        "average_price": float(position.average_price),
-        "current_price": float(position.current_price) if position.current_price else None,
-        "market_value": float(position.market_value),
-        "unrealized_pnl": float(position.unrealized_pnl),
-    }
+@router.get("/accounts", response_model=list[dict])
+def list_portfolio_accounts(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """List all saved paper portfolios owned by the current user."""
+    return [
+        {
+            "id": account.id,
+            "name": account.name,
+            "initial_capital": float(account.initial_capital),
+            "cash": float(account.cash),
+            "created_at": account.created_at.isoformat() if account.created_at else None,
+        }
+        for account in persistent_portfolio_service.list_accounts(db, user_id=user.id)
+    ]
 
 
 @router.post("/account", response_model=dict)
@@ -58,16 +65,31 @@ def create_portfolio_account(
     request: PortfolioAccountRequest | None = None,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-):
-    """Create or reset portfolio account for the user."""
-    initial_capital = Decimal(str(request.initial_capital)) if request else Decimal("100000.00")
-    portfolio_account = PortfolioAccountService(initial_capital=initial_capital)
-    _portfolio_accounts[user.id] = portfolio_account
+) -> dict:
+    """Create a new named paper portfolio for the current user."""
+    initial_capital = (
+        Decimal(str(request.initial_capital)) if request else Decimal("100000.00")
+    )
+    name = request.name if request else "My Portfolio"
+    try:
+        account = persistent_portfolio_service.create_account(
+            db,
+            user_id=user.id,
+            name=name,
+            initial_capital=initial_capital,
+        )
+    except PortfolioAccountConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    logger.info(f"Created portfolio account for user {user.id} with capital {initial_capital}")
+    logger.info("Created portfolio account %s for user %s", account.id, user.id)
     return {
         "message": "Portfolio account created successfully",
-        "initial_capital": float(initial_capital),
+        "portfolio_id": account.id,
+        "name": account.name,
+        "initial_capital": float(account.initial_capital),
+        "cash": float(account.cash),
         "user_id": user.id,
     }
 
@@ -76,36 +98,23 @@ def create_portfolio_account(
 def get_portfolio_snapshot(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-):
-    """Get current portfolio snapshot."""
-    portfolio_account = _get_or_create_portfolio_account(user.id)
-    snapshot = portfolio_account.get_portfolio_snapshot()
-
-    return PortfolioSnapshotResponse(
-        id=snapshot.id,
-        date=snapshot.date.isoformat(),
-        equity=float(snapshot.equity),
-        cash=float(snapshot.cash),
-        positions={symbol: _position_to_dict(pos) for symbol, pos in snapshot.positions.items()},
-    )
+    portfolio_id: int | None = Query(default=None, ge=1),
+) -> PortfolioSnapshotResponse:
+    """Get a saved portfolio snapshot, valued using the latest available market prices."""
+    account = _account_or_404(db, user.id, portfolio_id)
+    return PortfolioSnapshotResponse(**persistent_portfolio_service.snapshot(db, account))
 
 
 @router.get("/account/allocation", response_model=PortfolioAllocationResponse)
 def get_portfolio_allocation(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-):
-    """Get current portfolio allocation."""
-    portfolio_account = _get_or_create_portfolio_account(user.id)
-    allocation = portfolio_account.get_allocation()
-    total_equity = float(portfolio_account.get_total_equity())
-    cash = float(portfolio_account.cash)
-
-    # Calculate positions value
-    positions_value = total_equity - cash
-
+    portfolio_id: int | None = Query(default=None, ge=1),
+) -> PortfolioAllocationResponse:
+    """Get allocation percentages for a saved portfolio."""
+    account = _account_or_404(db, user.id, portfolio_id)
     return PortfolioAllocationResponse(
-        allocation=allocation, total_equity=total_equity, cash=cash, positions_value=positions_value
+        **persistent_portfolio_service.allocation(db, account)
     )
 
 
@@ -114,24 +123,21 @@ def get_transaction_history(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(default=100, ge=1, le=1000),
-):
-    """Get transaction history."""
-    portfolio_account = _get_or_create_portfolio_account(user.id)
-    transactions = portfolio_account.get_transaction_history()
-
-    # Return most recent transactions first, limited by count
-    recent_transactions = list(reversed(transactions))[:limit]
-
+    portfolio_id: int | None = Query(default=None, ge=1),
+) -> list[TransactionResponse]:
+    """Get persisted transaction history for a saved portfolio."""
+    account = _account_or_404(db, user.id, portfolio_id)
+    rows = persistent_portfolio_service.transactions(db, account, limit=limit)
     return [
         TransactionResponse(
-            symbol=t.symbol,
-            action=t.action,
-            quantity=float(t.quantity),
-            price=float(t.price),
-            timestamp=t.timestamp.isoformat(),
-            fees=float(t.fees),
+            symbol=row.symbol,
+            action=row.action,
+            quantity=float(row.quantity),
+            price=float(row.price),
+            timestamp=row.timestamp.isoformat(),
+            fees=float(row.fees),
         )
-        for t in recent_transactions
+        for row in rows
     ]
 
 
@@ -140,39 +146,22 @@ def execute_trade(
     request: TradeRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-):
-    """Execute a buy or sell trade."""
-    portfolio_account = _get_or_create_portfolio_account(user.id)
-
-    # Convert to Decimal for precision
-    quantity = Decimal(str(request.quantity))
-    price = Decimal(str(request.price))
-    fees = Decimal(str(request.fees))
-
-    success = False
-    if request.action.upper() == "BUY":
-        success = portfolio_account.buy(
-            symbol=request.symbol.upper(), quantity=quantity, price=price, fees=fees
+    portfolio_id: int | None = Query(default=None, ge=1),
+) -> dict:
+    """Record a manual paper buy/sell trade in the user's saved portfolio."""
+    account = _account_or_404(db, user.id, portfolio_id)
+    try:
+        return persistent_portfolio_service.execute_trade(
+            db,
+            account,
+            symbol=request.symbol,
+            action=request.action,
+            quantity=Decimal(str(request.quantity)),
+            price=Decimal(str(request.price)),
+            fees=Decimal(str(request.fees)),
         )
-    elif request.action.upper() == "SELL":
-        success = portfolio_account.sell(
-            symbol=request.symbol.upper(), quantity=quantity, price=price, fees=fees
-        )
-
-    if not success:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to execute {request.action} trade for {request.symbol}"
-        )
-
-    return {
-        "message": f"{request.action} order executed successfully",
-        "symbol": request.symbol.upper(),
-        "quantity": float(quantity),
-        "price": float(price),
-        "fees": float(fees),
-        "total_value": float(quantity * price),
-        "new_cash_balance": float(portfolio_account.cash),
-    }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/optimize", response_model=OptimizationResponse)

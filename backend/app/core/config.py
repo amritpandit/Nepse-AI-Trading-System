@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     app_env: Literal["local", "test", "dev", "prod"] = "local"
     app_version: str = "0.1.0"
 
-    secret_key: str = DEFAULT_SECRET_KEY
+    # Accept both names used by the project documentation and existing deployments.
+    secret_key: str = Field(
+        default=DEFAULT_SECRET_KEY,
+        validation_alias=AliasChoices("SECRET_KEY", "JWT_SECRET_KEY", "secret_key"),
+    )
     access_token_expire_minutes: int = 60
 
     database_url: str = "sqlite:///./nepse_ai.db"
@@ -29,6 +33,14 @@ class Settings(BaseSettings):
     mlflow_enabled: bool = True
     mlflow_tracking_uri: str = "file:./mlruns"
     mlflow_experiment_prefix: str = ""
+
+    # Public read-only NEPSE market snapshots (unofficial third-party aggregator).
+    # This feed is used for display/research only; it never places trades.
+    yonepse_enabled: bool = True
+    yonepse_base_url: str = "https://raw.githubusercontent.com/Shubhamnpk/yonepse/main"
+    yonepse_timeout_seconds: int = Field(default=8, ge=2, le=30)
+    yonepse_cache_seconds: int = Field(default=60, ge=0, le=600)
+    yonepse_stale_after_minutes: int = Field(default=90, ge=1, le=1440)
 
     calendarific_api_key: str = ""
     calendarific_country: str = "NP"

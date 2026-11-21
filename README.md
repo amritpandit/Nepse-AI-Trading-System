@@ -224,6 +224,34 @@ sources to OHLCV (Merolagani floor-sheet ticks are aggregated per symbol), merge
 `(symbol, date)`, and upserts into `prices`. Symbols must already exist in `stocks` (seed first);
 unresolved symbols are skipped and reported. Omit `symbol` from the request to ingest all symbols.
 
+### Public NEPSE Market Snapshot
+
+The market dashboard can read a public, read-only snapshot from [YONEPSE](https://github.com/Shubhamnpk/yonepse).
+The integration exposes `GET /market/live` for stock search and ranking and uses the same feed for
+the NEPSE index on the market overview page. The feed is unofficial and aggregated from NEPSE and
+other credited sources; it is not an exchange-certified real-time feed. The provider documents
+hourly refreshes during market hours and a short CDN cache. Check the returned `as_of` timestamp
+and `freshness` value before relying on a quote. Stale or delayed prices must not be presented as
+current market quotes.
+
+The feed is read-only and is not copied into the platform database. Its repository code is MIT
+licensed, but that does not independently establish licensing or redistribution rights for every
+underlying market-data source. The dashboard retains provider attribution and advises independent
+verification.
+
+### Saved Personal Portfolios
+
+Authenticated users can create multiple named paper portfolios. Account balances, holdings and
+transaction history are stored in PostgreSQL and scoped to the owning user. The
+`0015_add_user_portfolios` migration creates the required tables; apply it with
+`alembic upgrade head` before using the persistent portfolio API. Portfolio BUY/SELL entries
+are records for research and tracking only: they do not submit orders to a broker or the exchange.
+Current valuations use the YONEPSE feed when available and disclose its timestamp and freshness.
+
+Configuration is available in `.env.example`:
+`YONEPSE_ENABLED`, `YONEPSE_BASE_URL`, `YONEPSE_TIMEOUT_SECONDS`,
+`YONEPSE_CACHE_SECONDS`, and `YONEPSE_STALE_AFTER_MINUTES`.
+
 ### Database Migrations
 
 ```bash
@@ -259,7 +287,8 @@ The REST API exposes auth, market data, features, data quality, strategies/backt
 | GET | `/metrics` | Prometheus metrics (request counts, latency histogram) |
 | POST | `/auth/register` | Register a new user |
 | POST | `/auth/login` | Login and receive access token |
-| GET | `/market/prices` | List price data with optional symbol filter |
+| GET | `/market/prices` | List stored price data with optional symbol filter |
+| GET | `/market/live` | Read-only YONEPSE market snapshot; supports symbol/company search, sorting, and limits |
 | POST | `/market/ingest` | Ingest a single price record for a stock |
 | POST | `/market/ingest/batch` | Batch ingest OHLCV data for a date range |
 | POST | `/features/generate` | Compute features for a single symbol/date |
@@ -291,7 +320,12 @@ The REST API exposes auth, market data, features, data quality, strategies/backt
 | GET | `/ml/models` | List trained models |
 | GET | `/ml/predict/{symbol}` | Get model prediction for a symbol |
 | POST | `/portfolio/account` | Create/reset a portfolio account |
-| GET | `/portfolio/account/snapshot` | Portfolio snapshot (equity, cash, positions) |
+| GET | `/portfolio/accounts` | List the current user's saved paper portfolios |
+| POST | `/portfolio/account` | Create a named, persistent paper portfolio |
+| GET | `/portfolio/account/snapshot` | Portfolio snapshot (equity, cash, positions); optional `portfolio_id` |
+| GET | `/portfolio/account/allocation` | Current cash and holdings allocation; optional `portfolio_id` |
+| GET | `/portfolio/account/transactions` | Persisted transaction history; optional `portfolio_id` |
+| POST | `/portfolio/account/trade` | Record a manual paper trade; optional `portfolio_id` |
 | POST | `/portfolio/optimize` | Optimize allocation (equal / risk-parity / mean-variance) |
 | GET | `/explain/models/{model_id}/importance` | Global feature importance (SHAP + fallbacks) |
 | POST | `/explain/models/{model_id}/predict` | Local attribution + trade explanation |

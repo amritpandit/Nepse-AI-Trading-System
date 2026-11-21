@@ -54,3 +54,13 @@ def test_provider_status_reports_no_secrets() -> None:
     fred = next(r for r in rows if r["key"] == "fred")
     assert fred["has_key"] is True
     assert fred["usable"] is True
+
+
+def test_secret_key_accepts_documented_secret_key_name() -> None:
+    cfg = Settings(_env_file=None, SECRET_KEY="secret-a")  # type: ignore[call-arg]
+    assert cfg.secret_key == "secret-a"
+
+
+def test_secret_key_accepts_jwt_secret_key_name() -> None:
+    cfg = Settings(_env_file=None, JWT_SECRET_KEY="secret-b")  # type: ignore[call-arg]
+    assert cfg.secret_key == "secret-b"

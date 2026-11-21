@@ -1,5 +1,7 @@
 # backend/tests/test_portfolio_integration.py
 
+from decimal import Decimal
+
 
 def test_portfolio_account_creation_and_trade(client):
     """Test creating a portfolio account and executing trades."""
@@ -25,7 +27,7 @@ def test_portfolio_account_creation_and_trade(client):
     )
     assert response.status_code == 200
     trade_data = response.json()
-    assert trade_data["message"] == "BUY order executed successfully"
+    assert trade_data["message"] == "BUY order recorded successfully in paper portfolio"
     assert trade_data["symbol"] == "NBL"
     assert trade_data["quantity"] == 100.0
     assert trade_data["price"] == 250.0
@@ -63,7 +65,7 @@ def test_portfolio_account_creation_and_trade(client):
     )
     assert response.status_code == 200
     trade_data = response.json()
-    assert trade_data["message"] == "SELL order executed successfully"
+    assert trade_data["message"] == "SELL order recorded successfully in paper portfolio"
     assert trade_data["symbol"] == "NBL"
     assert trade_data["quantity"] == 50.0
     assert trade_data["price"] == 260.0
@@ -165,3 +167,109 @@ def test_portfolio_health_endpoint(client):
     assert data["status"] == "healthy"
     assert data["service"] == "portfolio"
     assert data["version"] == "1.0.0"
+
+def test_portfolios_are_persisted_and_isolated_by_account(client) -> None:
+    first = client.post(
+        "/portfolio/account",
+        json={"name": "Long Term", "initial_capital": 20000.0},
+    )
+    second = client.post(
+        "/portfolio/account",
+        json={"name": "Dividend", "initial_capital": 15000.0},
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    first_id = first.json()["portfolio_id"]
+    second_id = second.json()["portfolio_id"]
+    assert first_id != second_id
+
+    listed = client.get("/portfolio/accounts")
+    assert listed.status_code == 200
+    assert {item["name"] for item in listed.json()} == {"Long Term", "Dividend"}
+
+    trade = client.post(
+        f"/portfolio/account/trade?portfolio_id={first_id}",
+        json={
+            "symbol": "NABIL",
+            "action": "BUY",
+            "quantity": 20,
+            "price": 300.0,
+            "fees": 50.0,
+        },
+    )
+    assert trade.status_code == 200
+    assert trade.json()["execution_type"] == "paper_portfolio_record_only"
+    assert trade.json()["new_cash_balance"] == 13950.0
+
+    # Separate API requests read the same saved rows, not an in-memory session object.
+    first_snapshot = client.get(f"/portfolio/account/snapshot?portfolio_id={first_id}")
+    second_snapshot = client.get(f"/portfolio/account/snapshot?portfolio_id={second_id}")
+    assert first_snapshot.status_code == 200
+    assert first_snapshot.json()["cash"] == 13950.0
+    assert first_snapshot.json()["positions"]["NABIL"]["quantity"] == 20.0
+    assert second_snapshot.status_code == 200
+    assert second_snapshot.json()["cash"] == 15000.0
+    assert second_snapshot.json()["positions"] == {}
+
+    history = client.get(f"/portfolio/account/transactions?portfolio_id={first_id}")
+    assert history.status_code == 200
+    assert len(history.json()) == 1
+    assert history.json()[0]["symbol"] == "NABIL"
+
+
+def test_portfolio_id_cannot_be_read_by_another_user(client, db_session) -> None:
+    from app.models.user import User
+    from app.services.persistent_portfolio import persistent_portfolio_service
+
+    other_user = User(
+        id="another-user",
+        email="another@example.com",
+        hashed_password="x",
+        role="researcher",
+    )
+    db_session.add(other_user)
+    db_session.commit()
+    other_account = persistent_portfolio_service.create_account(
+        db_session,
+        user_id=other_user.id,
+        name="Private Portfolio",
+        initial_capital=Decimal("10000.00"),
+    )
+
+    response = client.get(f"/portfolio/account/snapshot?portfolio_id={other_account.id}")
+    assert response.status_code == 404
+
+def test_portfolio_falls_back_to_cost_basis_when_market_feed_is_stale(
+    client, monkeypatch
+) -> None:
+    from app.services.persistent_portfolio import persistent_portfolio_service
+
+    monkeypatch.setattr(
+        persistent_portfolio_service,
+        "_live_quotes",
+        lambda positions: (
+            {},
+            {
+                "source": "YONEPSE",
+                "as_of": "2026-11-18T15:00:00+05:45",
+                "freshness": "stale",
+            },
+        ),
+    )
+    created = client.post(
+        "/portfolio/account",
+        json={"name": "Stale Price Test", "initial_capital": 10000.0},
+    )
+    portfolio_id = created.json()["portfolio_id"]
+    bought = client.post(
+        f"/portfolio/account/trade?portfolio_id={portfolio_id}",
+        json={"symbol": "NABIL", "action": "BUY", "quantity": 10, "price": 100.0},
+    )
+    assert bought.status_code == 200
+
+    snapshot = client.get(f"/portfolio/account/snapshot?portfolio_id={portfolio_id}")
+    assert snapshot.status_code == 200
+    position = snapshot.json()["positions"]["NABIL"]
+    assert position["current_price"] == 100.0
+    assert position["market_value"] == 1000.0
+    assert snapshot.json()["market_data_freshness"] == "stale"
