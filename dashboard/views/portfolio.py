@@ -164,6 +164,8 @@ def page_portfolio() -> None:
             f"Valuation source: {source} · Prices as of: {as_of} · Feed status: {str(freshness).upper()}. "
             "Market prices are indicative and may be delayed."
         )
+        if source == "YONEPSE":
+            st.markdown("[YONEPSE source repository](https://github.com/Shubhamnpk/yonepse)")
         if freshness in {"stale", "delayed"}:
             st.warning(
                 "Some portfolio values use delayed or stale market prices. "
