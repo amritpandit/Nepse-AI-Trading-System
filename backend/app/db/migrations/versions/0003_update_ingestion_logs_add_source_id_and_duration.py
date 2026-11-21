@@ -1,6 +1,6 @@
 ﻿"""update ingestion logs add source_id and duration
 
-Revision ID: 0003_update_ingestion_logs_add_source_id_and_duration
+Revision ID: 0003_ingest_source_duration
 Revises: 0002_add_data_sources_and_ingestion_logs
 Create Date: 2026-06-05
 """
@@ -8,7 +8,7 @@ Create Date: 2026-06-05
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0003_update_ingestion_logs_add_source_id_and_duration"
+revision = "0003_ingest_source_duration"
 down_revision = "0002_add_data_sources_and_ingestion_logs"
 branch_labels = None
 depends_on = None
