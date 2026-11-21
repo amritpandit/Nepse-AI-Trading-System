@@ -30,12 +30,14 @@ def page_market_overview():
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            nse_change = _safe_float(overview_data.get("nse_change", 0))
+            nse_value = overview_data.get("nse_value")
+            nse_change = overview_data.get("nse_change")
             st.metric(
-                "NSE Index",
-                overview_data.get("nse_value", "N/A"),
-                delta=f"{nse_change:.2f}%",
+                "NEPSE Index",
+                f"{nse_value:,.2f}" if isinstance(nse_value, int | float) else "N/A",
+                delta=f"{nse_change:+.2f}%" if isinstance(nse_change, int | float) else None,
                 delta_color="inverse",
+                help="Live index data will appear once a verified NEPSE index feed is connected.",
             )
 
         with col2:
@@ -46,11 +48,12 @@ def page_market_overview():
             )
 
         with col3:
-            vol_change = _safe_float(overview_data.get("volume_change", 0))
+            vol_change = overview_data.get("volume_change")
             st.metric(
                 "Total Volume",
                 _format_currency(overview_data.get("total_volume", 0)),
-                delta=f"{vol_change:.1f}%",
+                delta=f"{vol_change:+.1f}%" if isinstance(vol_change, int | float) else None,
+                help=f"Aggregated for {overview_data.get('market_data_date') or 'the latest available trading date'} in the database.",
             )
 
         with col4:
