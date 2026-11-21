@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, PositiveFloat
+from pydantic import BaseModel, NonNegativeFloat, PositiveFloat
 
 # NOTE: Avoid using pydantic Field(...) here due to static type-checker overload
 # mismatches in the current environment. Runtime validation still occurs via
@@ -17,6 +17,11 @@ class PortfolioSnapshotResponse(BaseModel):
     equity: float
     cash: float
     positions: dict[str, dict]  # symbol -> position details
+    portfolio_id: int | None = None
+    portfolio_name: str | None = None
+    market_data_source: str | None = None
+    market_data_as_of: str | None = None
+    market_data_freshness: str | None = None
 
 
 class PortfolioAllocationResponse(BaseModel):
@@ -26,6 +31,11 @@ class PortfolioAllocationResponse(BaseModel):
     total_equity: float
     cash: float
     positions_value: float
+    portfolio_id: int | None = None
+    portfolio_name: str | None = None
+    market_data_source: str | None = None
+    market_data_as_of: str | None = None
+    market_data_freshness: str | None = None
 
 
 class TransactionResponse(BaseModel):
@@ -36,12 +46,13 @@ class TransactionResponse(BaseModel):
     quantity: float
     price: float
     timestamp: str
-    fees: float = 0.0
+    fees: NonNegativeFloat = 0.0
 
 
 class PortfolioAccountRequest(BaseModel):
     """Request to initialize portfolio account."""
 
+    name: str = "My Portfolio"
     initial_capital: PositiveFloat = 100000.0
 
 
