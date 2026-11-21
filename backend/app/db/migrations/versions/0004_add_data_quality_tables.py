@@ -1,7 +1,7 @@
 ﻿"""add_data_quality_tables
 
 Revision ID: 0004_add_data_quality_tables
-Revises: 0003_update_ingestion_logs_add_source_id_and_duration
+Revises: 0003_ingest_source_duration
 Create Date: 2026-06-05
 """
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0004_add_data_quality_tables"
-down_revision = "0003_update_ingestion_logs_add_source_id_and_duration"
+down_revision = "0003_ingest_source_duration"
 branch_labels = None
 depends_on = None
 
