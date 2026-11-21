@@ -35,7 +35,7 @@ authentication, navigation, and routing; each page lives in its own module under
 
 ### 📊 Market Overview
 
-- **Real-time market metrics**: NSE index, trading volume, active signals
+- **Source-attributed market snapshot**: NEPSE index, trading volume, listed stocks and data freshness
 - **Data quality dashboard**: Completeness, validation pass rate, trust scores
 - **Per-symbol analysis**: Detailed trust scores and quality components
 - **Comprehensive reports**: Daily quality reports with symbol-by-symbol breakdown
@@ -262,7 +262,8 @@ by the primary pages:
 
 ### Market Data
 
-- `GET /market/overview` → Market metrics and status
+- `GET /market/overview` → Market metrics and status, including feed freshness
+- `GET /market/live` → Read-only YONEPSE stock snapshot with search and ranking
 - `GET /market/live` → Public stock search and ranking snapshot
 - `GET /portfolio/accounts` → Saved portfolios for the authenticated user
 - `POST /portfolio/account` → Create a persistent portfolio
