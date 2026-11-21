@@ -7,10 +7,9 @@ snapshot. It does not place orders or write provider data into the database.
 from __future__ import annotations
 
 import copy
-import logging
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -18,7 +17,6 @@ import httpx
 
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
 
 NPT = ZoneInfo("Asia/Kathmandu")
 UTC = timezone.utc
