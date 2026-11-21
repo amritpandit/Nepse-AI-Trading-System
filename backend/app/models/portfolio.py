@@ -77,5 +77,5 @@ class PortfolioTransaction(Base):
         Numeric(18, 4), nullable=False, default=Decimal("0.0000"), server_default="0"
     )
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
     )
