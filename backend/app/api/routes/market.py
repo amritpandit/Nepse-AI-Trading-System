@@ -149,6 +149,7 @@ def get_market_overview(db: DbSession) -> dict:
     index_value = index_data.get("value") if isinstance(index_data, dict) else None
     index_change = index_data.get("percent_change") if isinstance(index_data, dict) else None
     market_data_date = snapshot.get("as_of") if snapshot else None
+    market_status = snapshot.get("market_status", {}) if snapshot else {}
 
     return {
         "total_symbols": summary.get("stock_count", total_symbols),
@@ -161,6 +162,8 @@ def get_market_overview(db: DbSession) -> dict:
         "market_data_source": snapshot.get("source") if snapshot else None,
         "market_data_source_url": snapshot.get("source_url") if snapshot else None,
         "market_data_attribution": snapshot.get("attribution") if snapshot else None,
+        "market_is_open": market_status.get("is_open"),
+        "market_status_checked_at": market_status.get("last_checked"),
         "active_signals": 0,
         "new_signals_today": 0,
         "new_symbols_today": 0,
