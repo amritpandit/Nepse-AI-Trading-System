@@ -5,7 +5,6 @@ import datetime as dt
 import pandas as pd
 import streamlit as st
 from common import (
-    _format_currency,
     _safe_dict,
     _safe_float,
     get_daily_quality_report,
@@ -37,7 +36,7 @@ def page_market_overview():
                 "NEPSE Index",
                 f"{nse_value:,.2f}" if isinstance(nse_value, int | float) else "N/A",
                 delta=f"{nse_change:+.2f}%" if isinstance(nse_change, int | float) else None,
-                delta_color="inverse",
+                delta_color="normal",
                 help="Index snapshot from the attributed YONEPSE third-party feed; cross-check important figures with NEPSE.",
             )
 
@@ -52,7 +51,7 @@ def page_market_overview():
             vol_change = overview_data.get("volume_change")
             st.metric(
                 "Total Volume",
-                _format_currency(overview_data.get("total_volume", 0)),
+                f"{_safe_float(overview_data.get('total_volume', 0)):,.0f}",
                 delta=f"{vol_change:+.1f}%" if isinstance(vol_change, int | float) else None,
                 help=f"Aggregated from the market feed for {overview_data.get('market_data_date') or 'the latest available trading date'}.",
             )
