@@ -115,16 +115,25 @@ class PersistentPortfolioService:
             logger.info("Portfolio valuation falling back to stored prices: %s", exc)
             return {}, {"source": None, "as_of": None, "freshness": "unavailable"}
 
+        freshness = str(snapshot.get("freshness", "unknown"))
+        market_meta = {
+            "source": snapshot.get("source"),
+            "as_of": snapshot.get("as_of"),
+            "freshness": freshness,
+        }
+        # Do not silently value holdings with stale or undated prices. In those
+        # cases snapshots fall back to a previously recorded price or cost basis.
+        if freshness not in {"fresh", "delayed"}:
+            return {}, market_meta
+
         quotes: dict[str, Decimal] = {}
         for row in snapshot.get("stocks", []):
             ltp = row.get("ltp")
             if row.get("symbol") and ltp is not None:
-                quotes[str(row["symbol"]).upper()] = Decimal(str(ltp))
-        return quotes, {
-            "source": snapshot.get("source"),
-            "as_of": snapshot.get("as_of"),
-            "freshness": snapshot.get("freshness", "unknown"),
-        }
+                quote = Decimal(str(ltp))
+                if quote > ZERO:
+                    quotes[str(row["symbol"]).upper()] = quote
+        return quotes, market_meta
 
     def snapshot(self, db: Session, account: PortfolioAccount) -> dict[str, Any]:
         positions = self._positions(db, account.id)
