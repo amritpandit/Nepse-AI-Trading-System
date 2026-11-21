@@ -17,7 +17,11 @@ class Settings(BaseSettings):
     app_env: Literal["local", "test", "dev", "prod"] = "local"
     app_version: str = "0.1.0"
 
-    secret_key: str = DEFAULT_SECRET_KEY
+    # Accept both names used by the project documentation and existing deployments.
+    secret_key: str = Field(
+        default=DEFAULT_SECRET_KEY,
+        validation_alias=AliasChoices("SECRET_KEY", "JWT_SECRET_KEY", "secret_key"),
+    )
     access_token_expire_minutes: int = 60
 
     database_url: str = "sqlite:///./nepse_ai.db"
