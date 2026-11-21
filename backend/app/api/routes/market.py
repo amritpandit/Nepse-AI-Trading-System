@@ -81,17 +81,23 @@ def get_market_overview(db: DbSession) -> dict:
     # Get total symbols
     total_symbols = db.scalar(sa.select(sa.func.count()).select_from(Stock)) or 0
 
-    # Get latest prices for overview
-    latest_prices = db.scalars(sa.select(Price).order_by(Price.date.desc()).limit(10)).all()
+    # Aggregate volume for the latest trading date available in the database.
+    latest_date = db.scalar(sa.select(sa.func.max(Price.date)))
+    total_volume = 0
+    if latest_date is not None:
+        total_volume = db.scalar(
+            sa.select(sa.func.coalesce(sa.func.sum(Price.volume), 0)).where(Price.date == latest_date)
+        ) or 0
 
-    total_volume = sum(p.volume for p in latest_prices if p.volume)
-
+    # Do not publish fabricated index/change values. A real NEPSE index feed
+    # will populate these fields once a verified market-data source is integrated.
     return {
         "total_symbols": total_symbols,
-        "nse_value": "1,850.25",  # Placeholder - integrate with NEPSE index
-        "nse_change": -0.45,
-        "total_volume": total_volume,
-        "volume_change": 2.1,
+        "nse_value": None,
+        "nse_change": None,
+        "total_volume": int(total_volume),
+        "volume_change": None,
+        "market_data_date": latest_date.isoformat() if latest_date is not None else None,
         "active_signals": 0,
         "new_signals_today": 0,
         "new_symbols_today": 0,
