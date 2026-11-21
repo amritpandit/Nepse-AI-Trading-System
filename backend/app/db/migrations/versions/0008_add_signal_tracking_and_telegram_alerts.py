@@ -1,6 +1,6 @@
 """add signal provider/telegram tracking tables
 
-Revision ID: 0008_add_signal_tracking_and_telegram_alerts
+Revision ID: 0008_signal_telegram_alerts
 Revises: 0007_add_benchmark_and_trade_fields
 Create Date: 2026-06-12
 
@@ -11,7 +11,7 @@ from alembic import op
 from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
-revision = "0008_add_signal_tracking_and_telegram_alerts"
+revision = "0008_signal_telegram_alerts"
 down_revision = "0007_add_benchmark_and_trade_fields"
 branch_labels = None
 depends_on = None
