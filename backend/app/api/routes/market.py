@@ -1,4 +1,5 @@
-from typing import Annotated
+from typing import Annotated, Literal
+import logging
 
 import sqlalchemy as sa
 from app.core.security import get_current_user
@@ -10,8 +11,14 @@ from app.schemas.ingestion import IngestionRequest
 from app.schemas.market import PriceIngestRequest, PriceResponse
 from app.services.csv_ingestion import CsvIngestionService
 from app.services.market import ingest_price, list_prices
+from app.services.yonepse_market import (
+    MarketDataUnavailable,
+    yonepse_market_data,
+)
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -75,29 +82,79 @@ def ingest_batch(
     return {"symbol": symbol.upper() if symbol else "ALL", **result}
 
 
+@router.get("/live")
+def get_live_market(
+    symbol: str | None = None,
+    search: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 500,
+    sort_by: Literal["turnover", "volume", "percent_change", "market_cap", "ltp"] = "turnover",
+    order: Literal["asc", "desc"] = "desc",
+) -> dict:
+    """Return the latest YONEPSE market snapshot and searchable stock rows."""
+    try:
+        snapshot = yonepse_market_data.get_snapshot()
+    except MarketDataUnavailable as exc:
+        logger.warning("YONEPSE market snapshot unavailable: %s", exc)
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=503, detail="Market data feed is temporarily unavailable") from exc
+
+    rows = snapshot["stocks"]
+    if symbol:
+        requested_symbol = symbol.strip().upper()
+        rows = [row for row in rows if row["symbol"] == requested_symbol]
+    if search:
+        query = search.strip().casefold()
+        rows = [
+            row for row in rows
+            if query in row["symbol"].casefold() or query in row["name"].casefold()
+        ]
+
+    rows = sorted(
+        rows,
+        key=lambda row: row.get(sort_by) if row.get(sort_by) is not None else float("-inf"),
+        reverse=order == "desc",
+    )
+    return {
+        **{key: value for key, value in snapshot.items() if key != "stocks"},
+        "total_results": len(rows),
+        "stocks": rows[:limit],
+    }
+
+
 @router.get("/overview")
 def get_market_overview(db: DbSession) -> dict:
-    """Get market overview summary for dashboard."""
-    # Get total symbols
+    """Get market overview using the public market feed, with DB fallback for volume."""
     total_symbols = db.scalar(sa.select(sa.func.count()).select_from(Stock)) or 0
-
-    # Aggregate volume for the latest trading date available in the database.
     latest_date = db.scalar(sa.select(sa.func.max(Price.date)))
-    total_volume = 0
+    db_volume = 0
     if latest_date is not None:
-        total_volume = db.scalar(
+        db_volume = db.scalar(
             sa.select(sa.func.coalesce(sa.func.sum(Price.volume), 0)).where(Price.date == latest_date)
         ) or 0
 
-    # Do not publish fabricated index/change values. A real NEPSE index feed
-    # will populate these fields once a verified market-data source is integrated.
+    snapshot = None
+    try:
+        snapshot = yonepse_market_data.get_snapshot()
+    except MarketDataUnavailable as exc:
+        logger.warning("Live market overview unavailable; using stored figures only: %s", exc)
+
+    index_data = snapshot.get("index") if snapshot else None
+    summary = snapshot.get("summary", {}) if snapshot else {}
+    index_value = index_data.get("value") if isinstance(index_data, dict) else None
+    index_change = index_data.get("percent_change") if isinstance(index_data, dict) else None
+    market_data_date = snapshot.get("as_of") if snapshot else None
+
     return {
-        "total_symbols": total_symbols,
-        "nse_value": None,
-        "nse_change": None,
-        "total_volume": int(total_volume),
+        "total_symbols": summary.get("stock_count", total_symbols),
+        "nse_value": index_value,
+        "nse_change": index_change,
+        "total_volume": summary.get("total_volume", int(db_volume)),
         "volume_change": None,
-        "market_data_date": latest_date.isoformat() if latest_date is not None else None,
+        "market_data_date": market_data_date or (latest_date.isoformat() if latest_date else None),
+        "market_data_freshness": snapshot.get("freshness") if snapshot else "unavailable",
+        "market_data_source": snapshot.get("source") if snapshot else None,
+        "market_data_attribution": snapshot.get("attribution") if snapshot else None,
         "active_signals": 0,
         "new_signals_today": 0,
         "new_symbols_today": 0,
