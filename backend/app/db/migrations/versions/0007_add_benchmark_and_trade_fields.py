@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0007_benchmark_trade_fields"
-down_revision = "0006_add_trust_version_and_event_features"
+down_revision = "0006_trust_event_features"
 branch_labels = None
 depends_on = None
 
