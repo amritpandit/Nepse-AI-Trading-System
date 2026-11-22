@@ -22,6 +22,7 @@ class PortfolioSnapshotResponse(BaseModel):
     market_data_source: str | None = None
     market_data_as_of: str | None = None
     market_data_freshness: str | None = None
+    market_data_freshness_reason: str | None = None
 
 
 class PortfolioAllocationResponse(BaseModel):
@@ -36,6 +37,7 @@ class PortfolioAllocationResponse(BaseModel):
     market_data_source: str | None = None
     market_data_as_of: str | None = None
     market_data_freshness: str | None = None
+    market_data_freshness_reason: str | None = None
 
 
 class TransactionResponse(BaseModel):
@@ -57,7 +59,7 @@ class PortfolioAccountRequest(BaseModel):
 
 
 class TradeRequest(BaseModel):
-    """Request to execute a trade."""
+    """Request to initialize trade."""
 
     symbol: str
     action: str
