@@ -29,10 +29,6 @@ ATTRIBUTION = (
 )
 
 
-class MarketDataUnavailable(RuntimeError):
-    """Raised when the external market feed is disabled or cannot be read."""
-
-
 def _parse_datetime(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -56,6 +52,10 @@ def _number(value: Any) -> float | None:
     return result if result == result and abs(result) != float("inf") else None
 
 
+class MarketDataUnavailable(RuntimeError):
+    """Raised when the external market feed is disabled or cannot be read."""
+
+
 class YonepseMarketDataService:
     """Fetch and normalize YONEPSE market JSON with a small process-local cache."""
 
@@ -67,6 +67,8 @@ class YonepseMarketDataService:
         cache_seconds: int | None = None,
         stale_after_minutes: int | None = None,
         delayed_after_minutes: int = 1440,
+        market_status_max_age_minutes: int | None = None,
+        market_closed_max_age_hours: int | None = None,
         enabled: bool | None = None,
         client: httpx.Client | None = None,
     ) -> None:
@@ -81,6 +83,16 @@ class YonepseMarketDataService:
             else stale_after_minutes
         )
         self.delayed_after_minutes = delayed_after_minutes
+        self.market_status_max_age_minutes = (
+            settings.yonepse_market_status_max_age_minutes
+            if market_status_max_age_minutes is None
+            else market_status_max_age_minutes
+        )
+        self.market_closed_max_age_hours = (
+            settings.yonepse_market_closed_max_age_hours
+            if market_closed_max_age_hours is None
+            else market_closed_max_age_hours
+        )
         self.enabled = settings.yonepse_enabled if enabled is None else enabled
         self._client = client
         self._cache: dict[str, Any] | None = None
@@ -95,6 +107,61 @@ class YonepseMarketDataService:
             return response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise MarketDataUnavailable(f"Could not retrieve market data from {path}") from exc
+
+    def _classify_freshness(
+        self,
+        timestamp: datetime | None,
+        *,
+        now: datetime,
+        market_is_open: bool | None,
+        status_checked_at: datetime | None,
+    ) -> tuple[str, float | None, str]:
+        """Classify one timestamp without mistaking a normal market closure for a failure."""
+        if timestamp is None:
+            return "unknown", None, "The provider did not supply a valid price timestamp."
+
+        now_npt = now.astimezone(NPT)
+        timestamp_npt = timestamp.astimezone(NPT)
+        age_minutes = max(
+            0.0,
+            (now_npt.astimezone(UTC) - timestamp_npt.astimezone(UTC)).total_seconds()
+            / 60,
+        )
+
+        status_age_minutes = None
+        if status_checked_at is not None:
+            status_age_minutes = max(
+                0.0,
+                (now_npt.astimezone(UTC) - status_checked_at.astimezone(UTC)).total_seconds()
+                / 60,
+            )
+
+        status_confirms_closed = (
+            market_is_open is False
+            and status_age_minutes is not None
+            and status_age_minutes <= self.market_status_max_age_minutes
+        )
+        weekend_closure = (
+            market_is_open is False
+            and now_npt.weekday() in (5, 6)
+            and timestamp_npt.weekday() < 5
+        )
+        closed_market_max_age = self.market_closed_max_age_hours * 60
+
+        if (
+            age_minutes <= closed_market_max_age
+            and (status_confirms_closed or weekend_closure)
+        ):
+            return (
+                "market_closed",
+                round(age_minutes, 1),
+                "The exchange is closed; this is the latest available session price.",
+            )
+        if age_minutes <= self.stale_after_minutes:
+            return "fresh", round(age_minutes, 1), "Price timestamp is within the fresh-data window."
+        if age_minutes <= self.delayed_after_minutes:
+            return "delayed", round(age_minutes, 1), "Price timestamp is older than the fresh-data window."
+        return "stale", round(age_minutes, 1), "Price timestamp exceeds the permitted data-age window."
 
     def get_snapshot(
         self, *, now: datetime | None = None, force_refresh: bool = False
@@ -142,6 +209,43 @@ class YonepseMarketDataService:
         if not isinstance(raw_stocks, list) or not isinstance(raw_indices, list):
             raise MarketDataUnavailable("YONEPSE returned an unexpected market-data format")
 
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=NPT)
+        now_npt = now.astimezone(NPT)
+
+        market_status = raw_status if isinstance(raw_status, dict) else {}
+        market_is_open = (
+            market_status.get("is_open")
+            if isinstance(market_status.get("is_open"), bool)
+            else None
+        )
+        status_checked_at = _parse_datetime(market_status.get("last_checked"))
+        status_age_minutes = None
+        if status_checked_at is not None:
+            status_age_minutes = max(
+                0.0,
+                (now_npt.astimezone(UTC) - status_checked_at).total_seconds() / 60,
+            )
+
+        market_status_data = {
+            "is_open": market_is_open,
+            "last_checked": market_status.get("last_checked"),
+            "last_checked_at": (
+                status_checked_at.astimezone(NPT).isoformat()
+                if status_checked_at is not None
+                else None
+            ),
+            "age_minutes": (
+                round(status_age_minutes, 1) if status_age_minutes is not None else None
+            ),
+            "freshness": (
+                "fresh"
+                if status_age_minutes is not None
+                and status_age_minutes <= self.market_status_max_age_minutes
+                else "stale" if status_checked_at is not None else "unknown"
+            ),
+        }
+
         stocks: list[dict[str, Any]] = []
         timestamps: list[datetime] = []
         for item in raw_stocks:
@@ -150,6 +254,8 @@ class YonepseMarketDataService:
             symbol = str(item.get("symbol") or "").strip().upper()
             if not symbol or item.get("asset_type") == "open_ended_mutual_fund":
                 continue
+            last_updated = item.get("last_updated")
+            parsed_time = _parse_datetime(last_updated)
             row = {
                 "symbol": symbol,
                 "name": str(item.get("name") or symbol),
@@ -163,10 +269,21 @@ class YonepseMarketDataService:
                 "turnover": _number(item.get("turnover")) or 0.0,
                 "trades": int(_number(item.get("trades")) or 0),
                 "market_cap": _number(item.get("market_cap")),
-                "last_updated": item.get("last_updated"),
+                "last_updated": last_updated,
+                "last_updated_at": (
+                    parsed_time.astimezone(NPT).isoformat() if parsed_time is not None else None
+                ),
             }
+            row_freshness, row_age, row_reason = self._classify_freshness(
+                parsed_time,
+                now=now_npt,
+                market_is_open=market_is_open,
+                status_checked_at=status_checked_at,
+            )
+            row["freshness"] = row_freshness
+            row["age_minutes"] = row_age
+            row["freshness_reason"] = row_reason
             stocks.append(row)
-            parsed_time = _parse_datetime(row["last_updated"])
             if parsed_time is not None:
                 timestamps.append(parsed_time)
 
@@ -181,6 +298,8 @@ class YonepseMarketDataService:
         )
         index_data: dict[str, Any] | None = None
         if nepse_index is not None:
+            generated_time = nepse_index.get("generatedTime")
+            parsed_index_time = _parse_datetime(generated_time)
             index_data = {
                 "name": "NEPSE Index",
                 "value": _number(nepse_index.get("currentValue"))
@@ -189,45 +308,37 @@ class YonepseMarketDataService:
                 "percent_change": _number(nepse_index.get("perChange")),
                 "high": _number(nepse_index.get("high")),
                 "low": _number(nepse_index.get("low")),
-                "generated_time": nepse_index.get("generatedTime"),
+                "generated_time": generated_time,
+                "generated_time_at": (
+                    parsed_index_time.astimezone(NPT).isoformat()
+                    if parsed_index_time is not None
+                    else None
+                ),
             }
-            parsed_index_time = _parse_datetime(index_data["generated_time"])
             if parsed_index_time is not None:
                 timestamps.append(parsed_index_time)
 
         latest_time = max(timestamps) if timestamps else None
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=NPT)
-        now_utc = now.astimezone(UTC)
-        age_minutes: float | None = None
-        freshness = "unknown"
-        if latest_time is not None:
-            age_minutes = max(0.0, (now_utc - latest_time).total_seconds() / 60)
-            if age_minutes <= self.stale_after_minutes:
-                freshness = "fresh"
-            elif age_minutes <= self.delayed_after_minutes:
-                freshness = "delayed"
-            else:
-                freshness = "stale"
+        freshness, age_minutes, freshness_reason = self._classify_freshness(
+            latest_time,
+            now=now_npt,
+            market_is_open=market_is_open,
+            status_checked_at=status_checked_at,
+        )
 
         total_volume = sum(row["volume"] for row in stocks)
         total_turnover = sum(row["turnover"] for row in stocks)
-        market_status = raw_status if isinstance(raw_status, dict) else {}
 
         return {
             "source": SOURCE_NAME,
             "source_url": SOURCE_URL,
             "attribution": ATTRIBUTION,
-            "fetched_at": now.astimezone(NPT).isoformat(),
+            "fetched_at": now_npt.isoformat(),
             "as_of": latest_time.astimezone(NPT).isoformat() if latest_time else None,
-            "age_minutes": round(age_minutes, 1) if age_minutes is not None else None,
+            "age_minutes": age_minutes,
             "freshness": freshness,
-            "market_status": {
-                "is_open": market_status.get("is_open")
-                if isinstance(market_status.get("is_open"), bool)
-                else None,
-                "last_checked": market_status.get("last_checked"),
-            },
+            "freshness_reason": freshness_reason,
+            "market_status": market_status_data,
             "index": index_data,
             "summary": {
                 "stock_count": len(stocks),
