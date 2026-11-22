@@ -1,7 +1,7 @@
-﻿"""update ingestion logs add source_id and duration
+"""update ingestion logs add source_id and duration
 
 Revision ID: 0003_ingest_source_duration
-Revises: 0002_add_data_sources_and_ingestion_logs
+Revises: 0002_data_sources_logs
 Create Date: 2026-06-05
 """
 
@@ -14,14 +14,19 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade():
-    with op.batch_alter_table('ingestion_logs', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('source_id', sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column('duration_seconds', sa.Float(), nullable=True))
-        batch_op.create_foreign_key('fk_ingestion_logs_source_id', 'data_sources', ['source_id'], ['id'])
+def upgrade() -> None:
+    with op.batch_alter_table("ingestion_logs", schema=None) as batch_op:
+        batch_op.add_column(sa.Column("source_id", sa.Integer(), nullable=True))
+        batch_op.add_column(sa.Column("duration_seconds", sa.Float(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_ingestion_logs_source_id",
+            "data_sources",
+            ["source_id"],
+            ["id"],
+        )
 
 
 def downgrade() -> None:
     op.drop_constraint("fk_ingestion_logs_source_id", "ingestion_logs", type_="foreignkey")
-    op.drop_column("ingestion_logs", "duration")
+    op.drop_column("ingestion_logs", "duration_seconds")
     op.drop_column("ingestion_logs", "source_id")
