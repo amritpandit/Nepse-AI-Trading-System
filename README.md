@@ -230,9 +230,13 @@ The market dashboard can read a public, read-only snapshot from [YONEPSE](https:
 The integration exposes `GET /market/live` for stock search and ranking and uses the same feed for
 the NEPSE index on the market overview page. The feed is unofficial and aggregated from NEPSE and
 other credited sources; it is not an exchange-certified real-time feed. The provider documents
-hourly refreshes during market hours and a short CDN cache. Check the returned `as_of` timestamp
-and `freshness` value before relying on a quote. Stale or delayed prices must not be presented as
-current market quotes.
+hourly refreshes during market hours and a short CDN cache. Check the returned `as_of` timestamp,
+global `freshness`, and each stock row's own `last_updated_at` / `freshness` before relying on a
+quote. The API distinguishes `fresh`, `delayed`, `stale`, `unknown`, and `market_closed`.
+`market_closed` means the latest available session price is being shown while the exchange is
+confirmed closed; it is a reference/closing price, not a live quote. Portfolio valuation checks
+each holding's own timestamp, accepts eligible latest-session prices while the market is closed,
+and falls back to stored price or cost basis for stale, missing, or unavailable quotes.
 
 The feed is read-only and is not copied into the platform database. Its repository code is MIT
 licensed, but that does not independently establish licensing or redistribution rights for every
@@ -250,7 +254,10 @@ Current valuations use the YONEPSE feed when available and disclose its timestam
 
 Configuration is available in `.env.example`:
 `YONEPSE_ENABLED`, `YONEPSE_BASE_URL`, `YONEPSE_TIMEOUT_SECONDS`,
-`YONEPSE_CACHE_SECONDS`, and `YONEPSE_STALE_AFTER_MINUTES`.
+`YONEPSE_CACHE_SECONDS`, `YONEPSE_STALE_AFTER_MINUTES`,
+`YONEPSE_MARKET_STATUS_MAX_AGE_MINUTES`, and
+`YONEPSE_MARKET_CLOSED_MAX_AGE_HOURS`. The defaults allow a recently confirmed closed-market
+snapshot to be used for up to 72 hours; older quotes are not used for portfolio valuation.
 
 ### Database Migrations
 
