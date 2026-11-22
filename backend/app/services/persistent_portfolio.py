@@ -16,6 +16,7 @@ from app.services.yonepse_market import MarketDataUnavailable, yonepse_market_da
 logger = logging.getLogger(__name__)
 ZERO = Decimal("0.0000")
 DEFAULT_INITIAL_CAPITAL = Decimal("100000.0000")
+VALUATION_FRESHNESS = {"fresh", "delayed", "market_closed"}
 
 
 class PortfolioAccountConflict(ValueError):
@@ -106,50 +107,96 @@ class PersistentPortfolioService:
             ).all()
         )
 
-    def _live_quotes(self, positions: list[PortfolioPosition]) -> tuple[dict[str, Decimal], dict[str, Any]]:
+    def _live_quotes(
+        self, positions: list[PortfolioPosition]
+    ) -> tuple[dict[str, Decimal], dict[str, Any]]:
         if not positions:
-            return {}, {"source": None, "as_of": None, "freshness": "not_applicable"}
+            return {}, {
+                "source": None,
+                "as_of": None,
+                "freshness": "not_applicable",
+                "freshness_reason": None,
+                "quotes": {},
+            }
         try:
             snapshot = yonepse_market_data.get_snapshot()
         except MarketDataUnavailable as exc:
             logger.info("Portfolio valuation falling back to stored prices: %s", exc)
-            return {}, {"source": None, "as_of": None, "freshness": "unavailable"}
+            return {}, {
+                "source": None,
+                "as_of": None,
+                "freshness": "unavailable",
+                "freshness_reason": str(exc),
+                "quotes": {},
+            }
 
-        freshness = str(snapshot.get("freshness", "unknown"))
-        market_meta = {
+        market_meta: dict[str, Any] = {
             "source": snapshot.get("source"),
             "as_of": snapshot.get("as_of"),
-            "freshness": freshness,
+            "freshness": str(snapshot.get("freshness", "unknown")),
+            "freshness_reason": snapshot.get("freshness_reason"),
+            "quotes": {},
         }
-        # Do not silently value holdings with stale or undated prices. In those
-        # cases snapshots fall back to a previously recorded price or cost basis.
-        if freshness not in {"fresh", "delayed"}:
-            return {}, market_meta
-
         quotes: dict[str, Decimal] = {}
+        position_symbols = {position.symbol.upper() for position in positions}
+
+        # Validate each symbol's own timestamp. A newer index or another stock's
+        # timestamp must not make an older individual quote appear current.
         for row in snapshot.get("stocks", []):
+            symbol = str(row.get("symbol") or "").strip().upper()
+            if symbol not in position_symbols:
+                continue
+
+            quote_freshness = str(row.get("freshness", "unknown"))
+            quote_as_of = row.get("last_updated_at") or row.get("last_updated")
             ltp = row.get("ltp")
-            if row.get("symbol") and ltp is not None:
-                quote = Decimal(str(ltp))
-                if quote > ZERO:
-                    quotes[str(row["symbol"]).upper()] = quote
+            quote_detail: dict[str, Any] = {
+                "as_of": quote_as_of,
+                "freshness": quote_freshness,
+                "age_minutes": row.get("age_minutes"),
+                "freshness_reason": row.get("freshness_reason"),
+                "used_for_valuation": False,
+            }
+            market_meta["quotes"][symbol] = quote_detail
+
+            if quote_freshness not in VALUATION_FRESHNESS or quote_as_of is None or ltp is None:
+                continue
+            quote = Decimal(str(ltp))
+            if quote <= ZERO:
+                continue
+
+            quotes[symbol] = quote
+            quote_detail["used_for_valuation"] = True
+
         return quotes, market_meta
 
     def snapshot(self, db: Session, account: PortfolioAccount) -> dict[str, Any]:
         positions = self._positions(db, account.id)
         quotes, market_meta = self._live_quotes(positions)
-        position_data: dict[str, dict[str, float | str]] = {}
+        quote_details = market_meta.get("quotes", {})
+        position_data: dict[str, dict[str, float | str | None]] = {}
         positions_value = ZERO
 
         for position in positions:
-            current_price = (
-                quotes.get(position.symbol)
-                or position.current_price
-                or position.average_price
-            )
+            quote_detail = quote_details.get(position.symbol, {})
+            if position.symbol in quotes:
+                current_price = quotes[position.symbol]
+                price_source = "YONEPSE"
+            elif position.current_price is not None:
+                current_price = position.current_price
+                price_source = "STORED"
+            else:
+                current_price = position.average_price
+                price_source = "COST_BASIS"
+
             market_value = position.quantity * current_price
             unrealized_pnl = position.quantity * (current_price - position.average_price)
             positions_value += market_value
+            fallback_freshness = (
+                market_meta["freshness"]
+                if market_meta["freshness"] == "unavailable"
+                else "unknown"
+            )
             position_data[position.symbol] = {
                 "symbol": position.symbol,
                 "quantity": float(position.quantity),
@@ -157,6 +204,9 @@ class PersistentPortfolioService:
                 "current_price": float(current_price),
                 "market_value": float(market_value),
                 "unrealized_pnl": float(unrealized_pnl),
+                "price_source": price_source,
+                "price_as_of": quote_detail.get("as_of"),
+                "price_freshness": quote_detail.get("freshness", fallback_freshness),
             }
 
         equity = account.cash + positions_value
@@ -171,6 +221,7 @@ class PersistentPortfolioService:
             "market_data_source": market_meta["source"],
             "market_data_as_of": market_meta["as_of"],
             "market_data_freshness": market_meta["freshness"],
+            "market_data_freshness_reason": market_meta.get("freshness_reason"),
         }
 
     def allocation(self, db: Session, account: PortfolioAccount) -> dict[str, Any]:
@@ -194,6 +245,7 @@ class PersistentPortfolioService:
             "market_data_source": snapshot["market_data_source"],
             "market_data_as_of": snapshot["market_data_as_of"],
             "market_data_freshness": snapshot["market_data_freshness"],
+            "market_data_freshness_reason": snapshot["market_data_freshness_reason"],
         }
 
     def transactions(
