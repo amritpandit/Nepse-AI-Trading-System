@@ -166,15 +166,26 @@ def page_portfolio() -> None:
         )
         if source == "YONEPSE":
             st.markdown("[YONEPSE source repository](https://github.com/Shubhamnpk/yonepse)")
-        if freshness == "market_closed":
+        stale_symbols = [
+            symbol
+            for symbol, item in positions.items()
+            if item.get("price_freshness") in {"stale", "delayed"}
+            or item.get("price_source") != "YONEPSE"
+        ]
+        if stale_symbols:
+            st.warning(
+                "These holdings use a stored price or cost basis because an eligible "
+                "symbol-level quote was unavailable: " + ", ".join(stale_symbols)
+            )
+        elif freshness == "market_closed":
             st.info(
                 "The exchange is closed. Holdings use the latest available session prices; "
                 "these are closing/reference prices, not live quotes."
             )
         elif freshness in {"stale", "delayed"}:
             st.warning(
-                "Some portfolio values use delayed or stale market prices. "
-                "The per-holding price status is shown below; verify prices independently."
+                "The overall market snapshot is delayed or stale. "
+                "Check the per-holding price status below before relying on valuations."
             )
         freshness_reason = snapshot.get("market_data_freshness_reason")
         if freshness_reason:
