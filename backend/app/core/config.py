@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     yonepse_timeout_seconds: int = Field(default=8, ge=2, le=30)
     yonepse_cache_seconds: int = Field(default=60, ge=0, le=600)
     yonepse_stale_after_minutes: int = Field(default=90, ge=1, le=1440)
+    yonepse_market_status_max_age_minutes: int = Field(default=180, ge=1, le=1440)
+    yonepse_market_closed_max_age_hours: int = Field(default=72, ge=1, le=168)
 
     calendarific_api_key: str = ""
     calendarific_country: str = "NP"
@@ -89,8 +91,8 @@ class Settings(BaseSettings):
     finnhub_rate_limit_per_minute: int = 30
 
     # Context.dev — enriched market context / entity extraction.
-    # Key/base-url env vars use provider-specific names that differ from the field
-    # name, so these two keep an explicit validation_alias.
+    # Key/base-url env vars use provider-specific names that differ from the
+    # field name, so these two keep an explicit validation_alias.
     contex_dev_enabled: bool = False
     contex_dev_api_key: str = Field(
         default="",
