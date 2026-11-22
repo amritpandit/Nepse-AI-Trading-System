@@ -59,7 +59,7 @@ class PortfolioAccountRequest(BaseModel):
 
 
 class TradeRequest(BaseModel):
-    """Request to initialize trade."""
+    """Request to execute a paper trade."""
 
     symbol: str
     action: str
