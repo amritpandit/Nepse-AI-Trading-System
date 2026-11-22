@@ -6,11 +6,8 @@ Create Date: 2026-06-13
 
 """
 
-from __future__ import annotations
-
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.reflection import Inspector
 
 
@@ -20,29 +17,21 @@ branch_labels = None
 depends_on = None
 
 
-def _get_engine() -> Engine:
-    bind = op.get_bind()
-    if isinstance(bind, Engine):
-        return bind
-    if isinstance(bind, Connection):
-        return bind.engine
-    # Fallback for unexpected bind types; still helps keep Alembic runtime behavior.
-    maybe_engine = getattr(bind, "engine", None)
-    if isinstance(maybe_engine, Engine):
-        return maybe_engine
-    raise TypeError(f"Unsupported Alembic bind type: {type(bind)!r}")
+def _get_inspector() -> Inspector:
+    # Inspect on Alembic's active connection to include DDL from earlier
+    # revisions in the same PostgreSQL transaction.
+    return sa.inspect(op.get_bind())
 
 
 def _table_exists(table_name: str) -> bool:
-    engine = _get_engine()
-    return table_name in Inspector.from_engine(engine).get_table_names()
+    return _get_inspector().has_table(table_name)
 
 
 def _column_exists(table_name: str, column_name: str) -> bool:
-    engine = _get_engine()
-    columns = Inspector.from_engine(engine).get_columns(table_name)
-    return column_name in {column["name"] for column in columns}
-
+    inspector = _get_inspector()
+    return inspector.has_table(table_name) and column_name in {
+        column["name"] for column in inspector.get_columns(table_name)
+    }
 
 
 def upgrade() -> None:
