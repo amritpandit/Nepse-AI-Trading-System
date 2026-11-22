@@ -86,7 +86,12 @@ def page_market_overview():
         if freshness == "stale":
             st.warning("Market data is stale. Do not use these prices as current quotes.")
         elif freshness == "delayed":
-            st.info("The latest available market snapshot is delayed; the market may have closed.")
+            st.info("The latest available market snapshot is delayed; verify prices before relying on them.")
+        elif freshness == "market_closed":
+            st.info(
+                "The exchange is closed. This is the latest available session snapshot, "
+                "not a live market quote."
+            )
     else:
         st.warning("Live market feed is unavailable. The index is shown as N/A rather than estimated.")
 
@@ -131,6 +136,8 @@ def page_market_overview():
                 "turnover",
                 "trades",
                 "last_updated",
+                "freshness",
+                "age_minutes",
             ]
             if column in live_df.columns
         ]
