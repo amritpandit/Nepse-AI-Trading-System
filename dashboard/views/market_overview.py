@@ -78,15 +78,26 @@ def page_market_overview():
         market_state = (
             "OPEN" if market_open is True else "CLOSED" if market_open is False else "UNKNOWN"
         )
+        status_freshness = overview_data.get("market_status_freshness", "unknown")
+        status_age = overview_data.get("market_status_age_minutes")
+        status_age_label = (
+            f"{status_age:.0f} minutes old"
+            if isinstance(status_age, int | float)
+            else "age unknown"
+        )
         st.caption(
             f"Provider market status: {market_state} · "
-            f"Last checked: {overview_data.get('market_status_checked_at') or 'not reported'}"
+            f"Last checked: {overview_data.get('market_status_checked_at') or 'not reported'} · "
+            f"status feed: {str(status_freshness).upper()} ({status_age_label})"
         )
         st.markdown("[YONEPSE source repository](https://github.com/Shubhamnpk/yonepse)")
         if freshness == "stale":
             st.warning("Market data is stale. Do not use these prices as current quotes.")
         elif freshness == "delayed":
-            st.info("The latest available market snapshot is delayed; verify prices before relying on them.")
+            st.info(
+                "The latest available market snapshot is delayed; "
+                "verify prices before relying on them."
+            )
         elif freshness == "market_closed":
             st.info(
                 "The exchange is closed. This is the latest available session snapshot, "
