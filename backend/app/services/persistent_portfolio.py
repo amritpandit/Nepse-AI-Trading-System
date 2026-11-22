@@ -243,6 +243,7 @@ class PersistentPortfolioService:
             "market_data_source": snapshot["market_data_source"],
             "market_data_as_of": snapshot["market_data_as_of"],
             "market_data_freshness": snapshot["market_data_freshness"],
+            "market_data_freshness_reason": snapshot["market_data_freshness_reason"],
         }
 
     def transactions(
