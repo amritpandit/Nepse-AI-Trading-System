@@ -158,10 +158,22 @@ class YonepseMarketDataService:
                 "The exchange is closed; this is the latest available session price.",
             )
         if age_minutes <= self.stale_after_minutes:
-            return "fresh", round(age_minutes, 1), "Price timestamp is within the fresh-data window."
+            return (
+                "fresh",
+                round(age_minutes, 1),
+                "Price timestamp is within the fresh-data window.",
+            )
         if age_minutes <= self.delayed_after_minutes:
-            return "delayed", round(age_minutes, 1), "Price timestamp is older than the fresh-data window."
-        return "stale", round(age_minutes, 1), "Price timestamp exceeds the permitted data-age window."
+            return (
+                "delayed",
+                round(age_minutes, 1),
+                "Price timestamp is older than the fresh-data window.",
+            )
+        return (
+            "stale",
+            round(age_minutes, 1),
+            "Price timestamp exceeds the permitted data-age window.",
+        )
 
     def get_snapshot(
         self, *, now: datetime | None = None, force_refresh: bool = False
