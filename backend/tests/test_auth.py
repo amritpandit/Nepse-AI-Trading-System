@@ -15,3 +15,11 @@ def test_register_and_login(client) -> None:
 
     assert login_response.status_code == 200
     assert login_response.json()["access_token"]
+
+
+def test_openapi_documents_manual_bearer_token_authorization(client) -> None:
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    security_schemes = response.json()["components"]["securitySchemes"]
+    assert security_schemes["HTTPBearer"] == {"type": "http", "scheme": "bearer"}
