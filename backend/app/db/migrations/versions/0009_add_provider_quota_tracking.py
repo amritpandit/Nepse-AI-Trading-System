@@ -8,8 +8,8 @@ Create Date: 2026-06-12
 
 import sqlalchemy as sa
 from alembic import op
-from typing import Any, List, Tuple
-from sqlalchemy import Column, Integer, Float, String
+from typing import Any
+from sqlalchemy import Column, Float, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.types import JSON
@@ -22,25 +22,26 @@ depends_on = None
 
 
 def _get_inspector() -> Inspector:
-    bind = op.get_bind()
-    engine = getattr(bind, "engine", bind)  # type: ignore[arg-type]
-    return Inspector.from_engine(engine)  # type: ignore[arg-type]
-
+    # Use Alembic's current connection to see uncommitted tables and indexes.
+    return sa.inspect(op.get_bind())
 
 
 def _table_exists(table_name: str) -> bool:
-    inspector = _get_inspector()
-    return table_name in inspector.get_table_names()
+    return _get_inspector().has_table(table_name)
 
 
 def _index_exists(table_name: str, index_name: str) -> bool:
     inspector = _get_inspector()
-    return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
+    return inspector.has_table(table_name) and index_name in {
+        index["name"] for index in inspector.get_indexes(table_name)
+    }
 
 
 def _column_exists(table_name: str, column_name: str) -> bool:
     inspector = _get_inspector()
-    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+    return inspector.has_table(table_name) and column_name in {
+        column["name"] for column in inspector.get_columns(table_name)
+    }
 
 
 def upgrade() -> None:
@@ -71,7 +72,9 @@ def upgrade() -> None:
             ),
         )
     else:
-        columns = {column["name"] for column in _get_inspector().get_columns("provider_quota_usage")}
+        columns = {
+            column["name"] for column in _get_inspector().get_columns("provider_quota_usage")
+        }
         columns_to_add: list[tuple[str, Column[Any]]] = [
             ("request_count", Column("request_count", Integer(), nullable=False, server_default="0")),
             ("signal_count", Column("signal_count", Integer(), nullable=False, server_default="0")),
