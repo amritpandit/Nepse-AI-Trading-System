@@ -221,7 +221,7 @@ class PersistentPortfolioService:
             "market_data_source": market_meta["source"],
             "market_data_as_of": market_meta["as_of"],
             "market_data_freshness": market_meta["freshness"],
-            "market_data_freshness_reason": market_meta["freshness_reason"],
+            "market_data_freshness_reason": market_meta.get("freshness_reason"),
         }
 
     def allocation(self, db: Session, account: PortfolioAccount) -> dict[str, Any]:
