@@ -1,6 +1,6 @@
 """add missing provider quota updated_count column
 
-Revision ID: 0010_add_provider_quota_updated_count
+Revision ID: 0010_provider_quota_count
 Revises: 0009_add_provider_quota_tracking
 Create Date: 2026-06-13
 
@@ -14,7 +14,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.reflection import Inspector
 
 
-revision = "0010_add_provider_quota_updated_count"
+revision = "0010_provider_quota_count"
 down_revision = "0009_add_provider_quota_tracking"
 branch_labels = None
 depends_on = None

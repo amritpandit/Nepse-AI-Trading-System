@@ -1,6 +1,6 @@
 """add_data_sources_and_ingestion_logs
 
-Revision ID: 0002_add_data_sources_and_ingestion_logs
+Revision ID: 0002_data_sources_logs
 Revises: 0001_initial_schema
 Create Date: 2026-06-05
 """
@@ -8,7 +8,7 @@ Create Date: 2026-06-05
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0002_add_data_sources_and_ingestion_logs"
+revision = "0002_data_sources_logs"
 down_revision = "0001_initial_schema"
 branch_labels = None
 depends_on = None

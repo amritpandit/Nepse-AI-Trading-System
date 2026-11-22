@@ -1,7 +1,7 @@
 """add provider quota tracking table
 
 Revision ID: 0009_add_provider_quota_tracking
-Revises: 0008_add_signal_tracking_and_telegram_alerts
+Revises: 0008_signal_telegram_alerts
 Create Date: 2026-06-12
 
 """
@@ -16,7 +16,7 @@ from sqlalchemy.types import JSON
 
 # revision identifiers, used by Alembic.
 revision = "0009_add_provider_quota_tracking"
-down_revision = "0008_add_signal_tracking_and_telegram_alerts"
+down_revision = "0008_signal_telegram_alerts"
 branch_labels = None
 depends_on = None
 

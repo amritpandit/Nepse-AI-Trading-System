@@ -1,6 +1,6 @@
 """add benchmark tables and update trades for transaction tracking
 
-Revision ID: 0007_add_benchmark_and_trade_fields
+Revision ID: 0007_benchmark_trade_fields
 Revises: 0006_add_trust_version_and_event_features
 Create Date: 2026-06-07
 
@@ -9,8 +9,8 @@ Create Date: 2026-06-07
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0007_add_benchmark_and_trade_fields"
-down_revision = "0006_add_trust_version_and_event_features"
+revision = "0007_benchmark_trade_fields"
+down_revision = "0006_trust_event_features"
 branch_labels = None
 depends_on = None
 
