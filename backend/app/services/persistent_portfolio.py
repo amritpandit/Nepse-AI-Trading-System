@@ -192,6 +192,11 @@ class PersistentPortfolioService:
             market_value = position.quantity * current_price
             unrealized_pnl = position.quantity * (current_price - position.average_price)
             positions_value += market_value
+            fallback_freshness = (
+                market_meta["freshness"]
+                if market_meta["freshness"] == "unavailable"
+                else "unknown"
+            )
             position_data[position.symbol] = {
                 "symbol": position.symbol,
                 "quantity": float(position.quantity),
@@ -201,10 +206,7 @@ class PersistentPortfolioService:
                 "unrealized_pnl": float(unrealized_pnl),
                 "price_source": price_source,
                 "price_as_of": quote_detail.get("as_of"),
-                "price_freshness": quote_detail.get(
-                    "freshness",
-                    market_meta["freshness"] if market_meta["freshness"] == "unavailable" else "unknown",
-                ),
+                "price_freshness": quote_detail.get("freshness", fallback_freshness),
             }
 
         equity = account.cash + positions_value
