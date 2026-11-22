@@ -32,7 +32,9 @@ def test_portfolio_uses_latest_session_quote_when_market_is_closed(
             "source": "YONEPSE",
             "as_of": "2026-11-20T15:16:44+05:45",
             "freshness": "market_closed",
-            "freshness_reason": "The exchange is closed; this is the latest available session price.",
+            "freshness_reason": (
+                "The exchange is closed; this is the latest available session price."
+            ),
             "stocks": [
                 {
                     "symbol": "NABIL",
@@ -40,7 +42,9 @@ def test_portfolio_uses_latest_session_quote_when_market_is_closed(
                     "last_updated_at": "2026-11-20T14:59:36+05:45",
                     "age_minutes": 3071.7,
                     "freshness": "market_closed",
-                    "freshness_reason": "The exchange is closed; this is the latest available session price.",
+                    "freshness_reason": (
+                        "The exchange is closed; this is the latest available session price."
+                    ),
                 }
             ],
         },
@@ -84,7 +88,9 @@ def test_portfolio_rejects_stale_symbol_quote_even_when_index_is_fresh(
                     "last_updated_at": "2026-11-20T14:59:36+05:45",
                     "age_minutes": 4000.0,
                     "freshness": "stale",
-                    "freshness_reason": "This symbol's quote is older than the allowed data-age window.",
+                    "freshness_reason": (
+                        "This symbol's quote is older than the allowed data-age window."
+                    ),
                 }
             ],
         },
