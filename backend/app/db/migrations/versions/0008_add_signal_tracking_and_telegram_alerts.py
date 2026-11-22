@@ -1,7 +1,7 @@
 """add signal provider/telegram tracking tables
 
 Revision ID: 0008_signal_telegram_alerts
-Revises: 0007_add_benchmark_and_trade_fields
+Revises: 0007_benchmark_trade_fields
 Create Date: 2026-06-12
 
 """
@@ -18,29 +18,27 @@ depends_on = None
 
 
 def _get_inspector() -> Inspector:
-    bind = op.get_bind()
-    # Alembic's `op.get_bind()` is typed as `Connection`.
-    # Pylance typing note: `Inspector.from_engine` expects an Engine; at runtime
-    # the bind typically exposes `.engine`.
-    engine = getattr(bind, "engine", bind)  # type: ignore[arg-type]
-    return Inspector.from_engine(engine)  # type: ignore[arg-type]
-
+    # Inspect through Alembic's active connection so this sees DDL performed
+    # earlier in the same PostgreSQL transaction.
+    return sa.inspect(op.get_bind())
 
 
 def _column_exists(table_name: str, column_name: str) -> bool:
     inspector = _get_inspector()
-    return column_name in {column["name"] for column in inspector.get_columns(table_name)}
+    return inspector.has_table(table_name) and column_name in {
+        column["name"] for column in inspector.get_columns(table_name)
+    }
 
 
 def _table_exists(table_name: str) -> bool:
-    inspector = _get_inspector()
-    return table_name in inspector.get_table_names()
+    return _get_inspector().has_table(table_name)
 
 
 def _index_exists(table_name: str, index_name: str) -> bool:
     inspector = _get_inspector()
-    return index_name in {index["name"] for index in inspector.get_indexes(table_name)}
-
+    return inspector.has_table(table_name) and index_name in {
+        index["name"] for index in inspector.get_indexes(table_name)
+    }
 
 
 def upgrade() -> None:
@@ -101,8 +99,13 @@ def upgrade() -> None:
             sa.Column("id", sa.BigInteger(), nullable=False),
             sa.Column("symbol", sa.String(length=20), nullable=False),
             sa.Column("alert_date", sa.Date(), nullable=False),
-            sa.Column("telegram_sent", sa.Boolean(), nullable=False, server_default=sa.text("0")),
-            sa.Column("delivery_status", sa.String(length=20), nullable=False, server_default="pending"),
+            sa.Column("telegram_sent", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column(
+                "delivery_status",
+                sa.String(length=20),
+                nullable=False,
+                server_default="pending",
+            ),
             sa.Column("alert_count", sa.Integer(), nullable=False, server_default="1"),
             sa.Column("last_error", sa.Text(), nullable=True),
             sa.Column("last_sent_at", sa.DateTime(timezone=True), nullable=True),
