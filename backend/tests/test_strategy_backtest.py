@@ -299,6 +299,48 @@ class TestBenchmarkService:
         with pytest.raises(ValueError, match="No historical price observations"):
             engine.run(strategy, ["TEST"], "2024-01-01", "2024-12-31")
 
+
+    def test_exit_does_not_use_same_day_close_when_next_open_is_missing(
+        self, db_session: Session
+    ) -> None:
+        _seed_price_data(db_session, "NOOPEN", "2024-01-01", count=3)
+        db_session.commit()
+        rows = db_session.scalars(
+            select(Price)
+            .join(Stock, Price.stock_id == Stock.id)
+            .where(Stock.symbol == "NOOPEN")
+            .order_by(Price.date)
+        ).all()
+        rows[0].open, rows[0].close, rows[0].volume = Decimal("100"), Decimal("100"), 1000
+        rows[1].open, rows[1].close, rows[1].volume = Decimal("105"), Decimal("105"), 1000
+        rows[2].open, rows[2].close, rows[2].volume = None, Decimal("90"), 1000
+        db_session.commit()
+
+        engine = BacktestEngine(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0"),
+            slippage_bps=Decimal("0"),
+            data_quality_gate=None,
+            session=db_session,
+        )
+        engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        engine._get_features = lambda symbol, date_str: {}
+        engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        engine._should_exit = (
+            lambda symbol, date_str, features, rules, position, price_row:
+            date_str == "2024-01-02"
+        )
+        strategy = SimpleNamespace(
+            id=2,
+            name="missing-open-test",
+            version="1",
+            config={"symbols": ["NOOPEN"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
+        )
+
+        result = engine.run(strategy, ["NOOPEN"], "2024-01-01", "2024-01-03")
+        assert [trade["action"] for trade in result["trades"]] == ["BUY"]
+        assert result["equity_curve"][-1]["positions_value"] == 9000.0
+
     def test_get_trading_dates_uses_observed_price_dates(self, db_session: Session) -> None:
         _seed_price_data(db_session, "TEST", "2024-01-01", count=5)
         engine = BacktestEngine(session=db_session)
