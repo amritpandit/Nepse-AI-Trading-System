@@ -125,6 +125,7 @@ class TestFullWorkflowCycleTime:
             commission_rate=Decimal("0.005"),
             slippage_bps=Decimal("5.0"),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
 
         start = time.perf_counter()
@@ -148,6 +149,7 @@ class TestFullWorkflowCycleTime:
             commission_rate=Decimal("0.005"),
             slippage_bps=Decimal("5.0"),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
         metrics = engine.run(
             strategy=strategy,
@@ -183,6 +185,7 @@ class TestExportSchemaValidation:
             commission_rate=Decimal("0.005"),
             slippage_bps=Decimal("5.0"),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
         bundle = engine.run(
             strategy=strategy_with_prices,
@@ -361,6 +364,7 @@ class TestBacktestDeterminism:
             commission_rate=Decimal(str(config.commission_rate)),
             slippage_bps=Decimal(str(config.slippage_bps)),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
 
         result_a = engine_a.run(
@@ -410,10 +414,12 @@ class TestBacktestDeterminism:
         engine_high = BacktestEngine(
             slippage_bps=Decimal("50.0"),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
         engine_low = BacktestEngine(
             slippage_bps=Decimal("1.0"),
             data_quality_gate=DataQualityGate(session=db_session),
+            session=db_session,
         )
 
         r_high = engine_high.run(strategy_with_prices, ["TEST"], "2024-01-01", "2024-01-30")
