@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Any, cast
+from unittest.mock import patch
 
 import httpx
 import sqlalchemy as sa
 from app.models.benchmark import NEPSEIndex
 from app.models.price import Price
+from app.models.signal import Signal
 from app.models.stock import Stock
+from app.api.routes import research as research_routes
 from app.services.nepal_market_data import (
     INDEX_PATH,
     REFERENCE_PATH,
@@ -322,3 +326,75 @@ def test_historical_score_validation_uses_chronological_holdout() -> None:
     assert result["buy_trigger_count"] > 0
     assert result["results"]["forward_20d"]["buy_sample_count"] > 0
     assert result["assumptions"]["nepse_index_role"].startswith("benchmark only")
+
+
+
+def test_saved_score_signal_is_idempotent_and_not_probability(db_session: Session) -> None:
+    stock = Stock(
+        symbol="LEDGER",
+        name="Ledger Test Limited",
+        sector="Commercial Bank",
+        instrument_type="ordinary",
+        is_active=True,
+    )
+    db_session.add(stock)
+    db_session.commit()
+
+    base_item = {
+        "symbol": "LEDGER",
+        "as_of": "2026-11-23",
+        "signal": "BUY_TRIGGER",
+        "buy_score": 80,
+        "sell_score": 20,
+        "score_margin": 60,
+        "score_model": {"score_type": "evidence points, not probability"},
+        "market_context": {"regime": "bullish"},
+        "sector_context": {"sector": "Commercial Bank"},
+        "data_freshness": {"status": "current"},
+        "data_quality": {"status": "usable"},
+        "signal_reason": "Test reason",
+        "reference_target_level": 120.0,
+        "reference_stop_level": 90.0,
+    }
+    scan_result = {
+        "as_of": "2026-11-23",
+        "market_context": {"regime": "bullish"},
+        "stocks_analyzed": 1,
+        "signals": [base_item],
+    }
+
+    with patch.object(
+        StockSectorResearchService,
+        "scan_stocks",
+        return_value=scan_result,
+    ):
+        first = research_routes.refresh_and_save_stock_signals(
+            user=cast(Any, None),
+            db=db_session,
+            limit=300,
+        )
+
+    count_after_first = db_session.scalar(sa.select(sa.func.count()).select_from(Signal))
+    assert first["snapshots_saved"] == 1
+    assert first["value_semantics"].startswith("signed score margin")
+    assert count_after_first == 1
+
+    updated_item = {**base_item, "signal": "SELL_TRIGGER", "buy_score": 15, "sell_score": 85, "score_margin": -70}
+    scan_result["signals"] = [updated_item]
+    with patch.object(
+        StockSectorResearchService,
+        "scan_stocks",
+        return_value=scan_result,
+    ):
+        second = research_routes.refresh_and_save_stock_signals(
+            user=cast(Any, None),
+            db=db_session,
+            limit=300,
+        )
+
+    rows = db_session.scalars(sa.select(Signal)).all()
+    assert second["snapshots_saved"] == 1
+    assert len(rows) == 1
+    assert rows[0].signal_type == "SELL_TRIGGER"
+    assert rows[0].value == -0.7
+    assert rows[0].confidence is None
