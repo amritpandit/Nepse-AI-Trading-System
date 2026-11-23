@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import plotly.graph_objects as go
 import requests  # type: ignore[import-untyped]
 import streamlit as st
+from plotly.subplots import make_subplots
 from common import API_BASE, auth_headers, render_hero, render_table
 
 
@@ -118,6 +120,157 @@ def page_research() -> None:
                 else:
                     st.info(f"{symbol}: {signal}")
                 st.write(data.get("signal_reason", ""))
+                score_buy, score_sell, score_margin = st.columns(3)
+                score_buy.metric("BUY score / 100", data.get("buy_score", 0))
+                score_sell.metric("SELL score / 100", data.get("sell_score", 0))
+                score_margin.metric("BUY − SELL margin", data.get("score_margin", 0))
+                score_model = data.get("score_model", {})
+                components = score_model.get("components", {})
+                if components:
+                    st.subheader("Scoring evidence")
+                    component_rows = []
+                    for component, item in components.items():
+                        component_rows.append(
+                            {
+                                "Factor": component.replace("_", " ").title(),
+                                "BUY points": item.get("buy_points", item.get("weight") if item.get("side") == "buy" else 0),
+                                "SELL points": item.get("sell_points", item.get("weight") if item.get("side") == "sell" else 0),
+                                "Evidence": item.get("reason") or item.get("methodology") or item.get("histogram") or item.get("value") or item.get("ratio") or "",
+                            }
+                        )
+                    render_table(
+                        pd.DataFrame(component_rows),
+                        key="research_score_components",
+                        name=f"{symbol}_score_components",
+                        height=300,
+                    )
+                chart_rows = data.get("price_history_for_chart", [])
+                if chart_rows:
+                    st.subheader("Price action, indicators and SMC levels")
+                    frame = pd.DataFrame(chart_rows)
+                    fig = make_subplots(
+                        rows=3,
+                        cols=1,
+                        shared_xaxes=True,
+                        vertical_spacing=0.035,
+                        row_heights=[0.58, 0.22, 0.20],
+                        specs=[[{"secondary_y": True}], [{}], [{}]],
+                    )
+                    fig.add_trace(
+                        go.Candlestick(
+                            x=frame["date"],
+                            open=frame["open"],
+                            high=frame["high"],
+                            low=frame["low"],
+                            close=frame["close"],
+                            name="OHLC",
+                        ),
+                        row=1,
+                        col=1,
+                        secondary_y=False,
+                    )
+                    for column, label in (
+                        ("sma_20", "SMA 20"),
+                        ("sma_50", "SMA 50"),
+                        ("sma_200", "SMA 200"),
+                    ):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=frame["date"],
+                                y=frame[column],
+                                mode="lines",
+                                name=label,
+                            ),
+                            row=1,
+                            col=1,
+                            secondary_y=False,
+                        )
+                    fig.add_trace(
+                        go.Bar(
+                            x=frame["date"],
+                            y=frame["volume"],
+                            name="Volume",
+                            opacity=0.22,
+                        ),
+                        row=1,
+                        col=1,
+                        secondary_y=True,
+                    )
+                    fig.add_trace(
+                        go.Bar(
+                            x=frame["date"],
+                            y=frame["macd_histogram"],
+                            name="MACD histogram",
+                        ),
+                        row=2,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["macd"], mode="lines", name="MACD"),
+                        row=2,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=frame["date"],
+                            y=frame["macd_signal"],
+                            mode="lines",
+                            name="MACD signal",
+                        ),
+                        row=2,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["rsi_14"], mode="lines", name="RSI 14"),
+                        row=3,
+                        col=1,
+                    )
+                    fig.add_hline(y=70, line_dash="dot", row=3, col=1)
+                    fig.add_hline(y=30, line_dash="dot", row=3, col=1)
+                    smc = data.get("smart_money_concepts", {})
+                    for key, label in (
+                        ("confirmed_swing_high", "Confirmed swing high"),
+                        ("confirmed_swing_low", "Confirmed swing low"),
+                    ):
+                        level = smc.get(key)
+                        if level is not None:
+                            fig.add_hline(
+                                y=float(level),
+                                line_dash="dash",
+                                annotation_text=label,
+                                row=1,
+                                col=1,
+                            )
+                    for key, label in (
+                        ("bullish_order_block_proxy", "Bullish order-block proxy"),
+                        ("bearish_order_block_proxy", "Bearish order-block proxy"),
+                    ):
+                        zone = smc.get(key)
+                        if isinstance(zone, dict):
+                            fig.add_hrect(
+                                y0=float(zone["low"]),
+                                y1=float(zone["high"]),
+                                opacity=0.12,
+                                line_width=0,
+                                annotation_text=label,
+                                row=1,
+                                col=1,
+                            )
+                    fig.update_layout(
+                        height=850,
+                        xaxis_rangeslider_visible=False,
+                        title=f"{symbol} — OHLC, trend, MACD and RSI",
+                        legend=dict(orientation="h", y=1.02, x=0),
+                    )
+                    fig.update_yaxes(title_text="Price (NPR)", row=1, col=1, secondary_y=False)
+                    fig.update_yaxes(title_text="Volume", row=1, col=1, secondary_y=True)
+                    fig.update_yaxes(title_text="MACD", row=2, col=1)
+                    fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
+                    st.plotly_chart(fig, use_container_width=True)
+                    st.caption(
+                        "Candlesticks with SMA20/50/200 and volume; MACD/histogram; RSI(14). "
+                        "Dashed/blocked overlays show rule-based SMC swing and order-block proxies."
+                    )
                 st.json(
                     {
                         "market_context": data.get("market_context"),
