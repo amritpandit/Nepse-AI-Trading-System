@@ -705,7 +705,9 @@ class StockSectorResearchService:
         return self._load_histories([stock], limit).get(stock.id, [])
 
     def _sector_summary(
-        self, eligible_stocks: list[Stock] | None = None
+        self,
+        eligible_stocks: list[Stock] | None = None,
+        market_context: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
         stocks = eligible_stocks or self.session.scalars(
             sa.select(Stock).where(
@@ -730,7 +732,7 @@ class StockSectorResearchService:
             if ret60 is not None:
                 grouped60.setdefault(str(stock.sector), []).append(float(ret60))
 
-        market = _market_regime(self.session)
+        market = market_context if market_context is not None else _market_regime(self.session)
         market_return = market.get("return_20d")
         result: dict[str, dict[str, Any]] = {}
         for sector, values in grouped.items():
@@ -756,8 +758,11 @@ class StockSectorResearchService:
         symbol: str,
         sector_summaries: dict[str, dict[str, Any]] | None = None,
         history: list[Price] | None = None,
+        stock_obj: Stock | None = None,
+        market_context: dict[str, Any] | None = None,
+        benchmark_rows: list[NEPSEIndex] | None = None,
     ) -> dict[str, Any]:
-        stock = self.session.scalar(
+        stock = stock_obj or self.session.scalar(
             sa.select(Stock).where(Stock.symbol == symbol.strip().upper())
         )
         if stock is None:
@@ -771,8 +776,12 @@ class StockSectorResearchService:
             raise ValueError("No valid OHLCV history is available for this stock")
 
         indicators = _indicator_snapshot(clean)
-        market = _market_regime(self.session)
-        sectors = sector_summaries if sector_summaries is not None else self._sector_summary()
+        market = market_context if market_context is not None else _market_regime(self.session)
+        sectors = (
+            sector_summaries
+            if sector_summaries is not None
+            else self._sector_summary(market_context=market)
+        )
         sector = sectors.get(str(stock.sector)) if stock.sector else None
         sector_rs = sector.get("relative_strength_vs_nepse_20d") if sector else None
 
@@ -791,68 +800,90 @@ class StockSectorResearchService:
         if not sector:
             warnings.append("Sector classification or clean sector history is unavailable.")
 
-        breakout = False
-        if indicators["previous_high_20d"] is not None and indicators["sma_50"] is not None:
-            breakout = (
-                indicators["close"] > indicators["previous_high_20d"]
-                and (indicators["volume_ratio_20d"] or 0) >= 1.5
-                and indicators["close"] > indicators["sma_50"]
+        smc = _smc_snapshot(clean)
+        score_model = _score_signal(indicators, smc, market, sector)
+        buy_score = int(score_model["buy_score"])
+        sell_score = int(score_model["sell_score"])
+        score_margin = int(score_model["score_margin"])
+
+        sma20 = indicators.get("sma_20")
+        volume_ratio = indicators.get("volume_ratio_20d")
+        sell_price_confirmation = bool(
+            indicators.get("breakdown_20d")
+            or (
+                sma20 is not None
+                and indicators["close"] < sma20
+                and volume_ratio is not None
+                and volume_ratio >= 1.2
             )
-        sma20 = indicators["sma_20"]
-        rsi = indicators["rsi_14"]
-        macd = indicators["macd"]
-        macd_signal = indicators["macd_signal"]
-        previous_sma20 = indicators.get("previous_sma_20")
-        previous_close = indicators.get("previous_close")
-        sell_trigger = (
-            sma20 is not None
-            and previous_sma20 is not None
-            and previous_close is not None
-            and indicators["close"] < sma20
-            and previous_close >= previous_sma20
-            and indicators["volume_ratio_20d"] is not None
-            and indicators["volume_ratio_20d"] >= 1.2
         )
+        latest_age_days = max((date.today() - clean[-1].date).days, 0)
+        data_freshness = "current" if latest_age_days <= 7 else "stale"
 
         trigger = "HOLD"
-        trigger_reason = "No confirmed breakout or breakdown trigger on the latest completed session."
-        if sell_trigger:
+        trigger_reason = "Neither directional score reached the trigger threshold."
+        buy_gates = {
+            "market_history_available": market.get("regime") != "unavailable",
+            "market_not_bearish": market.get("regime") in ("bullish", "sideways"),
+            "sector_history_available": sector_rs is not None,
+            "sector_not_underperforming": sector_rs is not None and sector_rs >= 0,
+            "at_least_50_clean_sessions": len(clean) >= 50,
+            "no_recent_price_discontinuity": not discontinuity["flagged"],
+            "latest_data_within_7_calendar_days": data_freshness == "current",
+        }
+        if data_freshness == "stale":
+            trigger = "STALE_DATA"
+            trigger_reason = (
+                f"Latest usable completed session is {latest_age_days} calendar days old; "
+                "current stock triggers are suppressed."
+            )
+            warnings.append("Price history is more than seven calendar days old.")
+        elif (
+            buy_score >= 65
+            and score_margin >= 25
+            and all(buy_gates.values())
+        ):
+            trigger = "BUY_TRIGGER"
+            trigger_reason = (
+                "Composite BUY score reached 65/100 with a 25-point margin and all "
+                "market, sector, history and data-quality gates passed."
+            )
+        elif (
+            sell_score >= 65
+            and -score_margin >= 25
+            and sell_price_confirmation
+            and data_freshness == "current"
+        ):
             trigger = "SELL_TRIGGER"
-            trigger_reason = "Close below SMA20 with elevated trading volume; review an existing holding."
-        elif breakout:
-            if market["regime"] == "bearish":
-                trigger = "WATCH"
-                trigger_reason = "Stock breakout is present, but the NEPSE market regime is bearish."
-            elif sector_rs is not None and sector_rs < 0:
-                trigger = "WATCH"
-                trigger_reason = "Stock breakout is present, but its sector is underperforming NEPSE."
-            elif market["regime"] == "unavailable" or sector_rs is None:
-                trigger = "SETUP"
-                trigger_reason = "Stock breakout is present; market or sector confirmation is missing."
-            elif len(clean) < 50:
-                trigger = "SETUP"
-                trigger_reason = "Stock breakout is present, but clean history is insufficient."
-            else:
-                trigger = "BUY_TRIGGER"
-                trigger_reason = "20-session breakout with volume expansion and market/sector confirmation."
+            trigger_reason = (
+                "Composite SELL score reached 65/100 with bearish price/volume confirmation. "
+                "This is a review/exit alert for an existing holding, not a short-sale instruction."
+            )
+        elif buy_score >= 45 or sell_score >= 45:
+            trigger = "WATCH"
+            trigger_reason = (
+                "Directional evidence is building, but the score threshold or one or more "
+                "confirmation gates have not been satisfied."
+            )
 
         confirmations = {
             "price_above_sma20": sma20 is not None and indicators["close"] > sma20,
             "sma20_above_sma50": sma20 is not None and indicators["sma_50"] is not None and sma20 > indicators["sma_50"],
-            "rsi_positive_momentum": rsi is not None and 50 <= rsi <= 70,
-            "macd_above_signal": macd is not None and macd_signal is not None and macd > macd_signal,
+            "rsi_positive_momentum": indicators.get("rsi_14") is not None and 50 <= indicators["rsi_14"] <= 70,
+            "macd_above_signal": indicators.get("macd") is not None and indicators.get("macd_signal") is not None and indicators["macd"] > indicators["macd_signal"],
             "sector_outperforming": sector_rs is not None and sector_rs > 0,
-            "market_not_bearish": market["regime"] in ("bullish", "sideways"),
+            "market_not_bearish": market.get("regime") in ("bullish", "sideways"),
         }
-        score = sum(1 for value in confirmations.values() if value)
-        benchmark_rows = self.session.scalars(
-            sa.select(NEPSEIndex)
-            .where(
-                NEPSEIndex.date >= clean[0].date,
-                NEPSEIndex.date <= clean[-1].date,
-            )
-            .order_by(NEPSEIndex.date)
-        ).all()
+        score_strength = max(buy_score, sell_score) / 100.0
+        if benchmark_rows is None:
+            benchmark_rows = self.session.scalars(
+                sa.select(NEPSEIndex)
+                .where(
+                    NEPSEIndex.date >= clean[0].date,
+                    NEPSEIndex.date <= clean[-1].date,
+                )
+                .order_by(NEPSEIndex.date)
+            ).all()
         atr = indicators["atr_14"]
         suggested_stop = (
             round(indicators["close"] - 2.0 * atr, 2) if atr is not None else None
@@ -865,12 +896,36 @@ class StockSectorResearchService:
             "as_of": clean[-1].date.isoformat(),
             "signal": trigger,
             "signal_reason": trigger_reason,
-            "confidence_score": round(score / len(confirmations), 4),
+            "confidence_score": round(score_strength, 4),
+            "buy_score": buy_score,
+            "sell_score": sell_score,
+            "score_margin": score_margin,
+            "score_model": score_model,
+            "confirmation_gates": buy_gates,
             "confirmation_checks": confirmations,
+            "smart_money_concepts": smc,
             "market_context": market,
             "sector_context": sector,
             "indicators": indicators,
+            "price_action": {
+                "bullish_engulfing": indicators.get("bullish_engulfing"),
+                "bearish_engulfing": indicators.get("bearish_engulfing"),
+                "hammer": indicators.get("hammer"),
+                "shooting_star": indicators.get("shooting_star"),
+                "prior_20_session_high": indicators.get("previous_high_20d"),
+                "prior_20_session_low": indicators.get("previous_low_20d"),
+            },
             "reference_stop_level": suggested_stop,
+            "reference_target_level": (
+                round(indicators["close"] + 4.0 * atr, 2) if atr is not None else None
+            ),
+            "price_history_for_chart": _chart_series(clean, smc),
+            "data_freshness": {
+                "status": data_freshness,
+                "latest_session": clean[-1].date.isoformat(),
+                "calendar_days_old": latest_age_days,
+                "max_age_calendar_days_for_new_trigger": 7,
+            },
             "historical_event_study": _historical_event_study(clean, list(benchmark_rows)),
             "data_quality": {
                 "status": "warning" if warnings or discontinuity["flagged"] else "usable",
