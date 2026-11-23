@@ -158,15 +158,17 @@ class NepalMarketDataImporter:
                     errors.append({"symbol": symbol, "error": f"download_failed: {exc}"})
                     continue
 
-                stock = session.scalar(sa.select(Stock).where(Stock.symbol == symbol))
-                if stock is None:
-                    stock = Stock(symbol=symbol)
-                    session.add(stock)
-                    session.flush()
-                stock.name = meta.get("name") or stock.name
-                stock.sector = meta.get("sector") or None
-                stock.instrument_type = "ordinary"
-                stock.is_active = True
+                stock: Stock | None = None
+                if not dry_run:
+                    stock = session.scalar(sa.select(Stock).where(Stock.symbol == symbol))
+                    if stock is None:
+                        stock = Stock(symbol=symbol)
+                        session.add(stock)
+                        session.flush()
+                    stock.name = meta.get("name") or stock.name
+                    stock.sector = meta.get("sector") or None
+                    stock.instrument_type = "ordinary"
+                    stock.is_active = True
 
                 parsed: dict[date, dict[str, Any]] = {}
                 for row in rows:
@@ -207,6 +209,8 @@ class NepalMarketDataImporter:
                     successful.append(symbol)
                     continue
 
+                if stock is None:
+                    raise RuntimeError(f"Stock metadata was not initialized for {symbol}")
                 if parsed:
                     existing_rows = session.scalars(
                         sa.select(Price).where(
