@@ -292,8 +292,6 @@ class BacktestEngine:
                 if features is None:
                     continue
 
-                volume = price_row.get("volume", 0)
-
                 if symbol in positions:
                     exit_rules = strategy.config.get("exit_rules", [])
                     pos = positions[symbol]
@@ -342,6 +340,7 @@ class BacktestEngine:
             "initial_capital": float(self.initial_capital),
             "commission_rate": float(self.commission_rate),
             "slippage_bps": float(self.slippage_bps),
+            "execution_delay_bars": self.execution_delay_bars,
             "symbols": symbols,
             "start_date": start_date,
             "end_date": end_date,
