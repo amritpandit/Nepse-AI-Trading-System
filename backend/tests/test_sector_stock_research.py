@@ -190,6 +190,10 @@ def test_weighted_score_model_has_100_points_and_is_not_a_probability() -> None:
         "macd_signal": 2.0,
         "macd_histogram": 2.0,
         "previous_macd_histogram": 1.5,
+        "adx_14": 32.0,
+        "stoch_k_14": 65.0,
+        "stoch_d_3": 60.0,
+        "obv_rising_20d": True,
         "volume_ratio_20d": 2.0,
         "daily_return": 0.04,
         "breakout_20d": True,
@@ -218,6 +222,10 @@ def test_weighted_score_model_handles_bearish_evidence() -> None:
         "macd_signal": -2.0,
         "macd_histogram": -2.0,
         "previous_macd_histogram": -1.5,
+        "adx_14": 32.0,
+        "stoch_k_14": 25.0,
+        "stoch_d_3": 40.0,
+        "obv_rising_20d": False,
         "volume_ratio_20d": 2.0,
         "daily_return": -0.04,
         "breakout_20d": False,
@@ -267,7 +275,10 @@ def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -
     assert indicators["sma_20"] is not None
     assert indicators["macd_histogram"] is not None
     assert len(chart) == 220
-    assert {"open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200", "macd", "macd_signal", "rsi_14"} <= set(chart[-1])
+    assert {
+        "open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200",
+        "macd", "macd_signal", "rsi_14", "adx_14", "stoch_k_14", "stoch_d_3", "obv",
+    } <= set(chart[-1])
 
 
 
