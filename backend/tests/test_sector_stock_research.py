@@ -12,7 +12,13 @@ from app.services.nepal_market_data import (
     REFERENCE_PATH,
     NepalMarketDataImporter,
 )
-from app.services.stock_sector_research import StockSectorResearchService
+from app.services.stock_sector_research import (
+    StockSectorResearchService,
+    _chart_series,
+    _indicator_snapshot,
+    _score_signal,
+    _smc_snapshot,
+)
 from sqlalchemy.orm import Session
 
 
@@ -164,3 +170,79 @@ def test_promoter_share_is_not_eligible_for_stock_triggers(db_session: Session) 
         assert "ordinary shares" in str(exc)
     else:
         raise AssertionError("promoter share must not receive ordinary-share triggers")
+
+
+
+def test_weighted_score_model_has_100_points_and_is_not_a_probability() -> None:
+    indicators = {
+        "close": 150.0,
+        "sma_20": 140.0,
+        "sma_50": 130.0,
+        "sma_200": 120.0,
+        "rsi_14": 62.0,
+        "macd": 4.0,
+        "macd_signal": 2.0,
+        "macd_histogram": 2.0,
+        "previous_macd_histogram": 1.5,
+        "volume_ratio_20d": 2.0,
+        "daily_return": 0.04,
+        "breakout_20d": True,
+        "breakdown_20d": False,
+    }
+    smc = {"bullish_points": 15, "bearish_points": 0}
+    market = {"regime": "bullish"}
+    sector = {"relative_strength_vs_nepse_20d": 0.04}
+
+    result = _score_signal(indicators, smc, market, sector)
+
+    assert sum(result["weights"].values()) == 100
+    assert result["buy_score"] == 100
+    assert result["sell_score"] == 0
+    assert "not a probability" in result["score_type"]
+
+
+def test_weighted_score_model_handles_bearish_evidence() -> None:
+    indicators = {
+        "close": 80.0,
+        "sma_20": 90.0,
+        "sma_50": 100.0,
+        "sma_200": 110.0,
+        "rsi_14": 32.0,
+        "macd": -4.0,
+        "macd_signal": -2.0,
+        "macd_histogram": -2.0,
+        "previous_macd_histogram": -1.5,
+        "volume_ratio_20d": 2.0,
+        "daily_return": -0.04,
+        "breakout_20d": False,
+        "breakdown_20d": True,
+    }
+    result = _score_signal(
+        indicators,
+        {"bullish_points": 0, "bearish_points": 15},
+        {"regime": "bearish"},
+        {"relative_strength_vs_nepse_20d": -0.05},
+    )
+    assert result["sell_score"] == 100
+    assert result["buy_score"] == 0
+    assert result["score_margin"] == -100
+
+
+def test_smc_rules_do_not_emit_structure_without_minimum_history() -> None:
+    result = _smc_snapshot([])
+    assert result["available"] is False
+    assert result["directional_points"] == 0
+
+
+def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -> None:
+    stock_id = _seed_price_data(db_session, "CHART", "2024-01-01", count=230)
+    rows = db_session.scalars(
+        select(Price).where(Price.stock_id == stock_id).order_by(Price.date)
+    ).all()
+    indicators = _indicator_snapshot(rows)
+    chart = _chart_series(rows, _smc_snapshot(rows))
+
+    assert indicators["sma_20"] is not None
+    assert indicators["macd_histogram"] is not None
+    assert len(chart) == 220
+    assert {"open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200", "macd", "macd_signal", "rsi_14"} <= set(chart[-1])
