@@ -131,6 +131,31 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     daily_return = float(close[-1] / close[-2] - 1.0) if close.size >= 2 and close[-2] > 0 else None
     bollinger_mid = float(sma20[-1]) if np.isfinite(sma20[-1]) else None
     bollinger_std = float(np.std(close[-20:], ddof=0)) if close.size >= 20 else None
+    previous_open = float(rows[-2].open) if len(rows) >= 2 else None
+    previous_close = float(close[-2]) if close.size >= 2 else None
+    current_open = float(rows[-1].open)
+    current_high = float(high[-1])
+    current_low = float(low[-1])
+    current_close = float(close[-1])
+    previous_bearish = previous_open is not None and previous_close is not None and previous_close < previous_open
+    previous_bullish = previous_open is not None and previous_close is not None and previous_close > previous_open
+    current_bullish = current_close > current_open
+    current_bearish = current_close < current_open
+    bullish_engulfing = (
+        previous_bearish and current_bullish
+        and current_open <= float(previous_close)
+        and current_close >= float(previous_open)
+    )
+    bearish_engulfing = (
+        previous_bullish and current_bearish
+        and current_open >= float(previous_close)
+        and current_close <= float(previous_open)
+    )
+    candle_body = abs(current_close - current_open)
+    lower_wick = min(current_open, current_close) - current_low
+    upper_wick = current_high - max(current_open, current_close)
+    hammer = candle_body > 0 and lower_wick >= 2 * candle_body and upper_wick <= candle_body
+    shooting_star = candle_body > 0 and upper_wick >= 2 * candle_body and lower_wick <= candle_body
     return {
         "close": float(close[-1]),
         "sma_20": float(sma20[-1]) if np.isfinite(sma20[-1]) else None,
@@ -151,6 +176,10 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         "daily_return": daily_return,
         "breakout_20d": previous_high20 is not None and close[-1] > previous_high20,
         "breakdown_20d": previous_low20 is not None and close[-1] < previous_low20,
+        "bullish_engulfing": bullish_engulfing,
+        "bearish_engulfing": bearish_engulfing,
+        "hammer": hammer,
+        "shooting_star": shooting_star,
         "volume_ratio_20d": volume_ratio,
         "previous_high_20d": previous_high20,
         "previous_low_20d": previous_low20,
@@ -398,6 +427,12 @@ def _score_signal(
     elif indicators.get("breakdown_20d"):
         sell += 15
         components["price_action"] = {"weight": 15, "side": "sell", "reason": "Close below previous 20-session low"}
+    elif indicators.get("bullish_engulfing") or indicators.get("hammer"):
+        buy += 5
+        components["price_action"] = {"weight": 15, "side": "buy", "reason": "Bullish reversal candle pattern"}
+    elif indicators.get("bearish_engulfing") or indicators.get("shooting_star"):
+        sell += 5
+        components["price_action"] = {"weight": 15, "side": "sell", "reason": "Bearish reversal candle pattern"}
     else:
         components["price_action"] = {"weight": 15, "side": "neutral"}
 
