@@ -311,7 +311,7 @@ class TestBenchmarkService:
         ).all()
         rows[0].open, rows[0].close, rows[0].volume = Decimal("100"), Decimal("100"), 1000
         rows[1].open, rows[1].close, rows[1].volume = Decimal("105"), Decimal("105"), 1000
-        setattr(rows[2], "open", None)
+        cast(Any, rows[2]).open = None
         rows[2].close, rows[2].volume = Decimal("90"), 1000
         db_session.commit()
 
