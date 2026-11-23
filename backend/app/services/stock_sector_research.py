@@ -145,6 +145,316 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     }
 
 
+
+def _smc_snapshot(rows: list[Price]) -> dict[str, Any]:
+    """Deterministic daily-bar approximations of common SMC concepts.
+
+    These are explicitly rule-defined proxies, not a claim to identify actual
+    institutional orders. Swing points are confirmed only after two later bars.
+    """
+    if len(rows) < 25:
+        return {
+            "available": False,
+            "reason": "At least 25 completed sessions required for SMC structure",
+            "directional_points": 0,
+        }
+
+    opens = np.asarray([float(row.open) for row in rows], dtype=float)
+    highs = np.asarray([float(row.high) for row in rows], dtype=float)
+    lows = np.asarray([float(row.low) for row in rows], dtype=float)
+    closes = np.asarray([float(row.close) for row in rows], dtype=float)
+    latest = len(rows) - 1
+
+    swing_highs: list[tuple[int, float]] = []
+    swing_lows: list[tuple[int, float]] = []
+    for index in range(2, len(rows) - 2):
+        if highs[index] >= max(highs[index - 2 : index]) and highs[index] > max(
+            highs[index + 1 : index + 3]
+        ):
+            swing_highs.append((index, float(highs[index])))
+        if lows[index] <= min(lows[index - 2 : index]) and lows[index] < min(
+            lows[index + 1 : index + 3]
+        ):
+            swing_lows.append((index, float(lows[index])))
+
+    last_swing_high = swing_highs[-1][1] if swing_highs else None
+    last_swing_low = swing_lows[-1][1] if swing_lows else None
+    previous_close = float(closes[-2])
+    current_close = float(closes[-1])
+    bullish_bos = (
+        last_swing_high is not None
+        and previous_close <= last_swing_high
+        and current_close > last_swing_high
+    )
+    bearish_bos = (
+        last_swing_low is not None
+        and previous_close >= last_swing_low
+        and current_close < last_swing_low
+    )
+
+    prior_low = float(np.min(lows[-21:-1]))
+    prior_high = float(np.max(highs[-21:-1]))
+    candle_mid = (float(highs[-1]) + float(lows[-1])) / 2.0
+    bullish_sweep = (
+        float(lows[-1]) < prior_low
+        and current_close > prior_low
+        and current_close >= candle_mid
+    )
+    bearish_sweep = (
+        float(highs[-1]) > prior_high
+        and current_close < prior_high
+        and current_close <= candle_mid
+    )
+    bullish_fvg = float(lows[-1]) > float(highs[-3])
+    bearish_fvg = float(highs[-1]) < float(lows[-3])
+
+    # A simple demand/supply block proxy: the last opposite-colour candle
+    # preceding a structure break. It is contextual, and not scored again
+    # unless price retests and rejects that zone.
+    bullish_order_block: dict[str, float] | None = None
+    bearish_order_block: dict[str, float] | None = None
+    if bullish_bos:
+        for index in range(latest - 1, max(-1, latest - 12), -1):
+            if closes[index] < opens[index]:
+                bullish_order_block = {
+                    "low": float(lows[index]),
+                    "high": float(opens[index]),
+                }
+                break
+    if bearish_bos:
+        for index in range(latest - 1, max(-1, latest - 12), -1):
+            if closes[index] > opens[index]:
+                bearish_order_block = {
+                    "low": float(opens[index]),
+                    "high": float(highs[index]),
+                }
+                break
+
+    bullish_ob_retest = (
+        bullish_order_block is not None
+        and float(lows[-1]) <= bullish_order_block["high"]
+        and current_close >= bullish_order_block["low"]
+        and current_close >= opens[-1]
+    )
+    bearish_ob_retest = (
+        bearish_order_block is not None
+        and float(highs[-1]) >= bearish_order_block["low"]
+        and current_close <= bearish_order_block["high"]
+        and current_close <= opens[-1]
+    )
+
+    bullish_points = (
+        (4 if bullish_sweep else 0)
+        + (5 if bullish_bos else 0)
+        + (3 if bullish_fvg else 0)
+        + (3 if bullish_ob_retest else 0)
+    )
+    bearish_points = (
+        (4 if bearish_sweep else 0)
+        + (5 if bearish_bos else 0)
+        + (3 if bearish_fvg else 0)
+        + (3 if bearish_ob_retest else 0)
+    )
+    return {
+        "available": True,
+        "confirmed_swing_high": last_swing_high,
+        "confirmed_swing_low": last_swing_low,
+        "bullish_bos": bullish_bos,
+        "bearish_bos": bearish_bos,
+        "bullish_liquidity_sweep": bullish_sweep,
+        "bearish_liquidity_sweep": bearish_sweep,
+        "bullish_fair_value_gap_proxy": bullish_fvg,
+        "bearish_fair_value_gap_proxy": bearish_fvg,
+        "bullish_order_block_proxy": bullish_order_block,
+        "bearish_order_block_proxy": bearish_order_block,
+        "bullish_order_block_retest": bullish_ob_retest,
+        "bearish_order_block_retest": bearish_ob_retest,
+        "bullish_points": bullish_points,
+        "bearish_points": bearish_points,
+        "directional_points": bullish_points - bearish_points,
+        "methodology": (
+            "Daily OHLC rule-based approximation: two-bar confirmed pivots, "
+            "20-session liquidity sweeps, close-through structure breaks, "
+            "three-candle gaps and opposite-candle block retests. Not actual order-flow data."
+        ),
+    }
+
+
+def _score_signal(
+    indicators: dict[str, Any],
+    smc: dict[str, Any],
+    market: dict[str, Any],
+    sector: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Create separate 0-100 BUY and SELL evidence scores; not probabilities."""
+    buy = 0
+    sell = 0
+    components: dict[str, dict[str, Any]] = {}
+
+    regime = market.get("regime")
+    if regime == "bullish":
+        buy += 10
+        components["market_regime"] = {"weight": 10, "side": "buy", "reason": "NEPSE trend bullish"}
+    elif regime == "bearish":
+        sell += 10
+        components["market_regime"] = {"weight": 10, "side": "sell", "reason": "NEPSE trend bearish"}
+    else:
+        components["market_regime"] = {"weight": 10, "side": "neutral", "reason": "No confirmed market trend"}
+
+    relative_strength = sector.get("relative_strength_vs_nepse_20d") if sector else None
+    if relative_strength is not None and relative_strength > 0:
+        buy += 10
+        components["sector_strength"] = {"weight": 10, "side": "buy", "value": relative_strength}
+    elif relative_strength is not None and relative_strength < 0:
+        sell += 10
+        components["sector_strength"] = {"weight": 10, "side": "sell", "value": relative_strength}
+    else:
+        components["sector_strength"] = {
+            "weight": 10,
+            "side": "neutral",
+            "reason": "Sector relative strength unavailable or flat",
+        }
+
+    close = indicators["close"]
+    sma20, sma50, sma200 = (
+        indicators.get("sma_20"),
+        indicators.get("sma_50"),
+        indicators.get("sma_200"),
+    )
+    if sma20 is not None and sma50 is not None and close > sma20 > sma50:
+        buy += 20 if sma200 is None or sma50 > sma200 else 15
+        components["trend_structure"] = {"weight": 20, "side": "buy", "reason": "Close above SMA20 and SMA20 above SMA50"}
+    elif sma20 is not None and sma50 is not None and close < sma20 < sma50:
+        sell += 20 if sma200 is None or sma50 < sma200 else 15
+        components["trend_structure"] = {"weight": 20, "side": "sell", "reason": "Close below SMA20 and SMA20 below SMA50"}
+    elif sma20 is not None and close > sma20:
+        buy += 8
+        components["trend_structure"] = {"weight": 20, "side": "buy", "reason": "Close above SMA20 only"}
+    elif sma20 is not None and close < sma20:
+        sell += 8
+        components["trend_structure"] = {"weight": 20, "side": "sell", "reason": "Close below SMA20 only"}
+    else:
+        components["trend_structure"] = {"weight": 20, "side": "neutral"}
+
+    rsi = indicators.get("rsi_14")
+    if rsi is not None and 55 <= rsi <= 70:
+        buy += 10
+        components["rsi_momentum"] = {"weight": 10, "side": "buy", "value": rsi}
+    elif rsi is not None and rsi < 40:
+        sell += 10
+        components["rsi_momentum"] = {"weight": 10, "side": "sell", "value": rsi}
+    elif rsi is not None and rsi > 75:
+        sell += 5
+        components["rsi_momentum"] = {"weight": 10, "side": "sell", "value": rsi, "reason": "Overbought risk"}
+    else:
+        components["rsi_momentum"] = {"weight": 10, "side": "neutral", "value": rsi}
+
+    macd = indicators.get("macd")
+    macd_signal = indicators.get("macd_signal")
+    previous_hist = indicators.get("previous_macd_histogram")
+    current_hist = indicators.get("macd_histogram")
+    if macd is not None and macd_signal is not None and macd > macd_signal and (
+        current_hist is None or previous_hist is None or current_hist >= previous_hist
+    ):
+        buy += 10
+        components["macd"] = {"weight": 10, "side": "buy", "histogram": current_hist}
+    elif macd is not None and macd_signal is not None and macd < macd_signal and (
+        current_hist is None or previous_hist is None or current_hist <= previous_hist
+    ):
+        sell += 10
+        components["macd"] = {"weight": 10, "side": "sell", "histogram": current_hist}
+    else:
+        components["macd"] = {"weight": 10, "side": "neutral", "histogram": current_hist}
+
+    volume_ratio = indicators.get("volume_ratio_20d")
+    daily_change = indicators.get("daily_return")
+    if volume_ratio is not None and volume_ratio >= 1.5 and daily_change is not None and daily_change > 0:
+        buy += 10
+        components["volume_confirmation"] = {"weight": 10, "side": "buy", "ratio": volume_ratio}
+    elif volume_ratio is not None and volume_ratio >= 1.2 and daily_change is not None and daily_change < 0:
+        sell += 10
+        components["volume_confirmation"] = {"weight": 10, "side": "sell", "ratio": volume_ratio}
+    else:
+        components["volume_confirmation"] = {"weight": 10, "side": "neutral", "ratio": volume_ratio}
+
+    if indicators.get("breakout_20d"):
+        buy += 15
+        components["price_action"] = {"weight": 15, "side": "buy", "reason": "Close above previous 20-session high"}
+    elif indicators.get("breakdown_20d"):
+        sell += 15
+        components["price_action"] = {"weight": 15, "side": "sell", "reason": "Close below previous 20-session low"}
+    else:
+        components["price_action"] = {"weight": 15, "side": "neutral"}
+
+    smc_buy = int(smc.get("bullish_points", 0))
+    smc_sell = int(smc.get("bearish_points", 0))
+    buy += smc_buy
+    sell += smc_sell
+    components["smc_price_action"] = {
+        "weight": 15,
+        "buy_points": smc_buy,
+        "sell_points": smc_sell,
+        "methodology": "Rule-based OHLC proxies; not observed institutional orders",
+    }
+
+    return {
+        "buy_score": min(100, buy),
+        "sell_score": min(100, sell),
+        "score_margin": buy - sell,
+        "score_type": "evidence points out of 100; not a probability of profit",
+        "components": components,
+        "weights": {
+            "market_regime": 10,
+            "sector_relative_strength": 10,
+            "trend_structure": 20,
+            "rsi_momentum": 10,
+            "macd": 10,
+            "volume_confirmation": 10,
+            "price_action_breakout_breakdown": 15,
+            "smc_rule_based_proxies": 15,
+        },
+    }
+
+
+def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return JSON-safe daily chart data with indicator overlays."""
+    sample = rows[-220:]
+    close = np.asarray([float(row.close) for row in sample], dtype=float)
+    highs = np.asarray([float(row.high) for row in sample], dtype=float)
+    lows = np.asarray([float(row.low) for row in sample], dtype=float)
+    volume = np.asarray([float(row.volume or 0) for row in sample], dtype=float)
+    sma20 = _sma(close, 20)
+    sma50 = _sma(close, 50)
+    sma200 = _sma(close, 200)
+    macd = _ema(close, 12) - _ema(close, 26)
+    macd_signal = _ema(macd, 9)
+    rsi = _rsi(close, 14)
+    result: list[dict[str, Any]] = []
+    for index, row in enumerate(sample):
+        result.append(
+            {
+                "date": row.date.isoformat(),
+                "open": float(row.open),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "volume": float(volume[index]),
+                "sma_20": float(sma20[index]) if np.isfinite(sma20[index]) else None,
+                "sma_50": float(sma50[index]) if np.isfinite(sma50[index]) else None,
+                "sma_200": float(sma200[index]) if np.isfinite(sma200[index]) else None,
+                "macd": float(macd[index]) if np.isfinite(macd[index]) else None,
+                "macd_signal": float(macd_signal[index]) if np.isfinite(macd_signal[index]) else None,
+                "macd_histogram": (
+                    float(macd[index] - macd_signal[index])
+                    if np.isfinite(macd[index]) and np.isfinite(macd_signal[index])
+                    else None
+                ),
+                "rsi_14": float(rsi[index]) if np.isfinite(rsi[index]) else None,
+            }
+        )
+    return result
+
+
 def _market_regime(session: Session) -> dict[str, Any]:
     rows = session.scalars(
         sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(220)
