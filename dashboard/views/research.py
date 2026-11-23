@@ -162,12 +162,18 @@ def page_research() -> None:
                     st.subheader("Price action, indicators and SMC levels")
                     frame = pd.DataFrame(chart_rows)
                     fig = make_subplots(
-                        rows=3,
+                        rows=5,
                         cols=1,
                         shared_xaxes=True,
-                        vertical_spacing=0.035,
-                        row_heights=[0.58, 0.22, 0.20],
-                        specs=[[{"secondary_y": True}], [{}], [{}]],
+                        vertical_spacing=0.025,
+                        row_heights=[0.50, 0.17, 0.11, 0.11, 0.11],
+                        specs=[
+                            [{"secondary_y": True}],
+                            [{}],
+                            [{}],
+                            [{}],
+                            [{"secondary_y": True}],
+                        ],
                     )
                     fig.add_trace(
                         go.Candlestick(
@@ -244,6 +250,63 @@ def page_research() -> None:
                     )
                     fig.add_hline(y=70, line_dash="dot", row=3, col=1)
                     fig.add_hline(y=30, line_dash="dot", row=3, col=1)
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["stoch_k_14"], mode="lines", name="Stochastic %K"),
+                        row=4,
+                        col=1,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["stoch_d_3"], mode="lines", name="Stochastic %D"),
+                        row=4,
+                        col=1,
+                    )
+                    fig.add_hline(y=80, line_dash="dot", row=4, col=1)
+                    fig.add_hline(y=20, line_dash="dot", row=4, col=1)
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["adx_14"], mode="lines", name="ADX 14"),
+                        row=5,
+                        col=1,
+                        secondary_y=False,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["plus_di_14"], mode="lines", name="+DI"),
+                        row=5,
+                        col=1,
+                        secondary_y=False,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["minus_di_14"], mode="lines", name="-DI"),
+                        row=5,
+                        col=1,
+                        secondary_y=False,
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=frame["date"], y=frame["obv"], mode="lines", name="OBV"),
+                        row=5,
+                        col=1,
+                        secondary_y=True,
+                    )
+                    for flag, label, marker, column in (
+                        ("bullish_engulfing", "Bullish engulfing", "triangle-up", "low"),
+                        ("hammer", "Hammer", "triangle-up", "low"),
+                        ("bearish_engulfing", "Bearish engulfing", "triangle-down", "high"),
+                        ("shooting_star", "Shooting star", "triangle-down", "high"),
+                    ):
+                        marked = frame[frame[flag].fillna(False)]
+                        if not marked.empty:
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=marked["date"],
+                                    y=marked[column],
+                                    mode="markers",
+                                    marker_symbol=marker,
+                                    marker_size=10,
+                                    name=label,
+                                ),
+                                row=1,
+                                col=1,
+                                secondary_y=False,
+                            )
                     smc = data.get("smart_money_concepts", {})
                     for key, label in (
                         ("confirmed_swing_high", "Confirmed swing high"),
@@ -254,6 +317,21 @@ def page_research() -> None:
                             fig.add_hline(
                                 y=float(level),
                                 line_dash="dash",
+                                annotation_text=label,
+                                row=1,
+                                col=1,
+                            )
+                    for key, label in (
+                        ("bullish_fvg_zone", "Bullish fair-value-gap proxy"),
+                        ("bearish_fvg_zone", "Bearish fair-value-gap proxy"),
+                    ):
+                        zone = smc.get(key)
+                        if isinstance(zone, dict):
+                            fig.add_hrect(
+                                y0=float(zone["low"]),
+                                y1=float(zone["high"]),
+                                opacity=0.10,
+                                line_width=0,
                                 annotation_text=label,
                                 row=1,
                                 col=1,
@@ -273,20 +351,68 @@ def page_research() -> None:
                                 row=1,
                                 col=1,
                             )
+                    indicators = data.get("indicators", {})
+                    price_action = data.get("price_action", {})
+                    for key, label in (
+                        ("retracement_38_2", "Fib 38.2%"),
+                        ("retracement_50_0", "Fib 50%"),
+                        ("retracement_61_8", "Fib 61.8%"),
+                    ):
+                        level = price_action.get("fibonacci_retracement_levels", {}).get(key)
+                        if level is not None:
+                            fig.add_hline(
+                                y=float(level),
+                                line_dash="dot",
+                                annotation_text=label,
+                                row=1,
+                                col=1,
+                            )
+                    for key, label in (
+                        ("high_60d", "60-session resistance"),
+                        ("low_60d", "60-session support"),
+                    ):
+                        level = price_action.get(key)
+                        if level is not None:
+                            fig.add_hline(
+                                y=float(level),
+                                line_dash="dash",
+                                annotation_text=label,
+                                row=1,
+                                col=1,
+                            )
+                    if smc.get("bullish_liquidity_sweep") or smc.get("bearish_liquidity_sweep"):
+                        latest = frame.iloc[-1]
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[latest["date"]],
+                                y=[latest["low"] if smc.get("bullish_liquidity_sweep") else latest["high"]],
+                                mode="markers+text",
+                                text=["Bullish liquidity sweep" if smc.get("bullish_liquidity_sweep") else "Bearish liquidity sweep"],
+                                textposition="top center",
+                                marker_size=12,
+                                name="SMC liquidity sweep",
+                            ),
+                            row=1,
+                            col=1,
+                        )
                     fig.update_layout(
-                        height=850,
+                        height=1100,
                         xaxis_rangeslider_visible=False,
-                        title=f"{symbol} — OHLC, trend, MACD and RSI",
+                        title=f"{symbol} — price action, indicators and SMC proxies",
                         legend=dict(orientation="h", y=1.02, x=0),
                     )
                     fig.update_yaxes(title_text="Price (NPR)", row=1, col=1, secondary_y=False)
                     fig.update_yaxes(title_text="Volume", row=1, col=1, secondary_y=True)
                     fig.update_yaxes(title_text="MACD", row=2, col=1)
                     fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
+                    fig.update_yaxes(title_text="Stochastic", range=[0, 100], row=4, col=1)
+                    fig.update_yaxes(title_text="ADX / Directional Index", row=5, col=1, secondary_y=False)
+                    fig.update_yaxes(title_text="OBV", row=5, col=1, secondary_y=True)
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption(
-                        "Candlesticks with SMA/EMA and Bollinger overlays; volume; MACD/histogram; RSI(14). "
-                        "Dashed/blocked overlays show rule-based SMC swing and order-block proxies."
+                        "Candlesticks with SMA/EMA, Bollinger Bands, volume, MACD, RSI, Stochastic, ADX, "
+                        "OBV and candle-pattern markers. SMC overlays are deterministic OHLC proxies, "
+                        "not verified institutional order-flow data."
                     )
                 st.json(
                     {
