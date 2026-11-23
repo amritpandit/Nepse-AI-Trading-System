@@ -119,6 +119,7 @@ class BacktestEngine:
         equity_curve: list[dict[str, Any]] = []
         trades: list[dict[str, Any]] = []
         pending_signals: list[PendingSignal] = []
+        last_close_prices: dict[str, Decimal] = {}
 
         # Deterministic backtest ID: stable hash of the inputs so repeated runs
         # with the same config produce the same ID (required for determinism tests).
@@ -133,6 +134,14 @@ class BacktestEngine:
                 + strategy.name
                 + "|"
                 + strategy.version
+                + "|"
+                + str(self.initial_capital)
+                + "|"
+                + str(self.commission_rate)
+                + "|"
+                + str(self.slippage_bps)
+                + "|"
+                + str(self.execution_delay_bars)
             ).encode()
         ).hexdigest()[:36]
 
@@ -181,8 +190,9 @@ class BacktestEngine:
                     # Size exposure caps against current portfolio equity.
                     held_value = Decimal("0")
                     for held_symbol, position in positions.items():
-                        close_px = available_prices.get(held_symbol, {}).get("close")
-                        mark_px = Decimal(str(close_px)) if close_px else position.entry_price
+                        # At this bar's open, only the prior completed bar's close
+                        # is observable for already-held positions.
+                        mark_px = last_close_prices.get(held_symbol, position.entry_price)
                         held_value += Decimal(str(position.quantity)) * mark_px
                     equity_now = Decimal(str(cash)) + held_value
                     portfolio = {
@@ -286,6 +296,11 @@ class BacktestEngine:
                     "positions_value": positions_value,
                 }
             )
+            # Keep only completed daily closes for the next bar's opening decisions.
+            for priced_symbol, priced_row in available_prices.items():
+                close_px = priced_row.get("close")
+                if close_px is not None:
+                    last_close_prices[priced_symbol] = Decimal(str(close_px))
 
             for symbol, price_row in available_prices.items():
                 features = self._get_features(symbol, date_str)
