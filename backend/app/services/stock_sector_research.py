@@ -670,11 +670,6 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
             obv[index] = obv[index - 1] - volume[index]
         else:
             obv[index] = obv[index - 1]
-    obv_base = float(obv[0]) if obv.size else 0.0
-    obv_index = (
-        (obv - obv_base + 100.0) if obv.size and np.any(obv != obv_base)
-        else np.full(close.shape, 100.0, dtype=float)
-    )
     rolling_std20 = np.full(close.shape, np.nan, dtype=float)
     for index in range(19, close.size):
         rolling_std20[index] = float(np.std(close[index - 19 : index + 1], ddof=0))
