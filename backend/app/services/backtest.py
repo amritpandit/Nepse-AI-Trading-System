@@ -46,6 +46,8 @@ MAX_FILL_RATE = 0.7  # cap fill rate at 70 % when volume-constrained
 
 @dataclass
 class PendingSignal:
+    """Order intent generated from a completed bar and filled on a later bar."""
+
     symbol: str
     bar_index: int
     signal_type: str
@@ -151,48 +153,55 @@ class BacktestEngine:
                     available_prices[symbol] = price_row
 
             for signal in pending_signals[:]:
-                if bar_index >= signal.bar_index + self.execution_delay_bars:
-                    if signal.symbol in positions:
-                        pending_signals.remove(signal)
-                        continue
-                    if signal.symbol not in available_prices:
+                # Signals are calculated after a bar closes. Even a configured
+                # zero-bar delay must therefore fill no earlier than the next bar.
+                minimum_delay = max(self.execution_delay_bars, 1)
+                if bar_index < signal.bar_index + minimum_delay:
+                    continue
+
+                price_row = available_prices.get(signal.symbol)
+
+                if signal.signal_type == "ENTRY":
+                    if signal.symbol in positions or price_row is None:
                         pending_signals.remove(signal)
                         continue
 
-                    price_row = available_prices[signal.symbol]
                     next_open = price_row.get("open") or price_row.get("close")
                     if not next_open:
                         pending_signals.remove(signal)
                         continue
 
+                    volume = int(price_row.get("volume") or 0)
+                    if volume < self.min_volume_threshold:
+                        pending_signals.remove(signal)
+                        continue
+
                     actual_price = self._apply_slippage(Decimal(str(next_open)), "buy")
-                    volume = price_row.get("volume", 0)
                     risk_rules = strategy.config.get("risk_rules", [])
-                    # Portfolio equity = cash + mark-to-market value of open positions.
-                    # Risk caps are sized against equity, not residual cash, so limits like
-                    # "max 10% of portfolio" stay correct as positions accumulate.
+                    # Size exposure caps against current portfolio equity.
                     held_value = Decimal("0")
-                    for s, p in positions.items():
-                        close_px = available_prices.get(s, {}).get("close")
-                        mark_px = Decimal(str(close_px)) if close_px else p.entry_price
-                        held_value += Decimal(str(p.quantity)) * mark_px
+                    for held_symbol, position in positions.items():
+                        close_px = available_prices.get(held_symbol, {}).get("close")
+                        mark_px = Decimal(str(close_px)) if close_px else position.entry_price
+                        held_value += Decimal(str(position.quantity)) * mark_px
                     equity_now = Decimal(str(cash)) + held_value
                     portfolio = {
                         "cash": float(cash),
                         "equity": float(equity_now),
                         "price": float(next_open),
                         "initial_capital": float(self.initial_capital),
-                        "positions": {s: p for s, p in positions.items()},
+                        "positions": {held_symbol: p for held_symbol, p in positions.items()},
                     }
                     risk_result = self._check_risk(portfolio, risk_rules, signal.symbol)
                     max_qty = risk_result["max_quantity"]
-                    if volume >= self.min_volume_threshold:
-                        qty = min(max_qty, volume // 10)
-                        fill_rate = self._calculate_fill_rate(volume, qty)
-                        actual_qty = int(qty * fill_rate)
+                    qty = min(max_qty, volume // 10)
+                    fill_rate = self._calculate_fill_rate(volume, qty)
+                    actual_qty = int(qty * fill_rate)
 
+                    if actual_qty > 0:
                         cost = Decimal(str(actual_qty)) * actual_price
-                        cost_with_commission = cost * (1 + self.commission_rate)
+                        commission = cost * self.commission_rate
+                        cost_with_commission = cost + commission
                         if cash >= cost_with_commission:
                             cash -= cost_with_commission
                             positions[signal.symbol] = Position(
@@ -209,10 +218,55 @@ class BacktestEngine:
                                     "quantity": float(actual_qty),
                                     "price": float(actual_price),
                                     "timestamp": f"{date_str}T09:00:00",
-                                    "transaction_cost": float(cost * self.commission_rate),
+                                    "transaction_cost": float(commission),
                                     "fill_rate": float(fill_rate),
                                 }
                             )
+                    pending_signals.remove(signal)
+
+                elif signal.signal_type == "EXIT":
+                    position = positions.get(signal.symbol)
+                    if position is None:
+                        pending_signals.remove(signal)
+                        continue
+                    # Keep an exit order pending until a usable bar and some volume
+                    # are available; do not silently discard the unfilled position.
+                    if price_row is None:
+                        continue
+                    next_open = price_row.get("open") or price_row.get("close")
+                    if not next_open:
+                        continue
+
+                    volume = int(price_row.get("volume") or 0)
+                    fill_rate = self._calculate_fill_rate(volume, position.quantity)
+                    actual_qty = min(position.quantity, int(position.quantity * fill_rate))
+                    if actual_qty <= 0:
+                        continue
+
+                    actual_price = self._apply_slippage(Decimal(str(next_open)), "sell")
+                    proceeds = Decimal(str(actual_qty)) * actual_price
+                    commission = proceeds * self.commission_rate
+                    cash += proceeds - commission
+                    position.quantity -= actual_qty
+                    trades.append(
+                        {
+                            "symbol": signal.symbol,
+                            "action": "SELL",
+                            "quantity": float(actual_qty),
+                            "price": float(actual_price),
+                            "timestamp": f"{date_str}T09:00:00",
+                            "transaction_cost": float(commission),
+                            "fill_rate": float(fill_rate),
+                        }
+                    )
+
+                    if position.quantity <= 0:
+                        del positions[signal.symbol]
+                        pending_signals.remove(signal)
+                    else:
+                        # Retry the remaining quantity on the next available bar.
+                        signal.bar_index = bar_index - minimum_delay
+                else:
                     pending_signals.remove(signal)
 
             # Mark open positions to market at the current bar's close so the equity curve
@@ -245,28 +299,20 @@ class BacktestEngine:
                     pos = positions[symbol]
 
                     if self._should_exit(symbol, date_str, features, exit_rules, pos, price_row):
-                        current_price = Decimal(str(price_row.get("close", 0)))
-                        exit_price = self._apply_slippage(current_price, "sell")
-                        fill_rate = self._calculate_fill_rate(volume, pos.quantity)
-                        actual_qty = int(pos.quantity * fill_rate)
-                        actual_price = exit_price
-
-                        proceeds = Decimal(str(actual_qty)) * actual_price
-                        cost = proceeds * self.commission_rate
-                        cash += proceeds - cost
-
-                        trades.append(
-                            {
-                                "symbol": symbol,
-                                "action": "SELL",
-                                "quantity": float(actual_qty),
-                                "price": float(actual_price),
-                                "timestamp": f"{date_str}T15:00:00",
-                                "transaction_cost": float(cost),
-                                "fill_rate": float(fill_rate),
-                            }
+                        has_pending_exit = any(
+                            pending.symbol == symbol and pending.signal_type == "EXIT"
+                            for pending in pending_signals
                         )
-                        del positions[symbol]
+                        if not has_pending_exit:
+                            # The rule is observed using this bar's completed data;
+                            # execution is deferred to a subsequent bar's open.
+                            pending_signals.append(
+                                PendingSignal(
+                                    symbol=symbol,
+                                    bar_index=bar_index,
+                                    signal_type="EXIT",
+                                )
+                            )
                 else:
                     entry_rules = strategy.config.get("entry_rules", [])
 
@@ -319,20 +365,33 @@ class BacktestEngine:
         end_date: str,
         symbols: list[str],
     ) -> list[date]:
+        """Return observed price dates, never synthetic weekends or missing bars."""
+        normalized_symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
+        if not normalized_symbols:
+            return []
+
         session = SessionLocal()
         try:
-            dates = []
-            start = date.fromisoformat(start_date)
-            end = date.fromisoformat(end_date)
-            current = start
-            while current <= end:
+            observed_dates = session.scalars(
+                sa.select(Price.date)
+                .join(Stock, Price.stock_id == Stock.id)
+                .where(
+                    Stock.symbol.in_(normalized_symbols),
+                    Price.date >= date.fromisoformat(start_date),
+                    Price.date <= date.fromisoformat(end_date),
+                )
+                .distinct()
+                .order_by(Price.date)
+            ).all()
+
+            trading_dates: list[date] = []
+            for observed_date in observed_dates:
                 holiday = session.scalar(
-                    sa.select(HolidayCalendar).where(HolidayCalendar.date == current)
+                    sa.select(HolidayCalendar).where(HolidayCalendar.date == observed_date)
                 )
                 if holiday is None or holiday.is_trading_day:
-                    dates.append(current)
-                current += timedelta(days=1)
-            return dates
+                    trading_dates.append(observed_date)
+            return trading_dates
         finally:
             session.close()
 
@@ -525,19 +584,50 @@ class BacktestEngine:
                 returns.append(float((curr - prev) / prev))
 
         max_drawdown = self._calculate_max_drawdown(equity_curve)
-        sharpe = self._calculate_sharpe(returns) if returns else None
+        sharpe = self._calculate_sharpe(returns) if len(returns) >= 2 else None
+        return_array = np.asarray(returns, dtype=float)
+        annualized_volatility = (
+            float(np.std(return_array, ddof=1) * np.sqrt(252))
+            if return_array.size >= 2
+            else None
+        )
+        downside_returns = return_array[return_array < 0]
+        downside_deviation = (
+            float(np.std(downside_returns, ddof=1))
+            if downside_returns.size >= 2
+            else None
+        )
+        sortino = (
+            float(np.mean(return_array) / downside_deviation * np.sqrt(252))
+            if downside_deviation is not None and downside_deviation > 0
+            else None
+        )
+        annualized_return = 0.0
+        if len(equity_curve) > 1 and initial_equity > 0:
+            annualized_return = (
+                (float(final_equity / initial_equity) ** (252 / (len(equity_curve) - 1))) - 1
+                if final_equity > 0
+                else -1.0
+            )
+        calmar = annualized_return / max_drawdown if max_drawdown > 0 else None
 
         return {
             "total_trades": total_trades,
             "total_return": round(total_return, 6),
-            "annualized_return": round(total_return * 252 / len(equity_curve), 6)
-            if equity_curve
-            else 0,
+            "annualized_return": round(annualized_return, 6),
+            "annualized_volatility": (
+                round(annualized_volatility, 6)
+                if annualized_volatility is not None
+                else None
+            ),
             "max_drawdown": round(max_drawdown, 6),
             "sharpe_ratio": round(sharpe, 4) if sharpe is not None else None,
+            "sortino_ratio": round(sortino, 4) if sortino is not None else None,
+            "calmar_ratio": round(calmar, 4) if calmar is not None else None,
             "win_rate": self._calculate_win_rate(trades),
             "profit_factor": self._calculate_profit_factor(trades),
             "expectancy": self._calculate_expectancy(trades),
+            "trading_days": len(equity_curve),
             "equity_curve": equity_curve,
             "trades": trades,
         }
@@ -566,11 +656,12 @@ class BacktestEngine:
         return max_dd
 
     def _calculate_sharpe(self, returns: list[float]) -> float:
-        if not returns:
+        """Annualized Sharpe ratio using sample standard deviation."""
+        if len(returns) < 2:
             return 0.0
-        arr = np.array(returns)
-        mean_ret = np.mean(arr)
-        std_ret = np.std(arr)
+        arr = np.asarray(returns, dtype=float)
+        mean_ret = float(np.mean(arr))
+        std_ret = float(np.std(arr, ddof=1))
         if std_ret == 0:
             return 0.0
         return float(mean_ret / std_ret * (252**0.5))
@@ -654,12 +745,19 @@ class BacktestService:
             return self._session
         return SessionLocal()
 
-    def _get_engine(self) -> BacktestEngine:
-        if self._engine is not None:
-            return self._engine
-        session = self._get_session()
-        self._engine = BacktestEngine(data_quality_gate=DataQualityGate(session=session))
-        return self._engine
+    def _get_engine(
+        self,
+        config: Mapping[str, Any],
+        session: Session,
+    ) -> BacktestEngine:
+        """Build a fresh engine so every run honors its own execution assumptions."""
+        return BacktestEngine(
+            initial_capital=Decimal(str(config.get("initial_capital", 1_000_000))),
+            commission_rate=Decimal(str(config.get("commission_rate", 0.005))),
+            slippage_bps=Decimal(str(config.get("slippage_bps", 5.0))),
+            execution_delay_bars=int(config.get("execution_delay_bars", 1)),
+            data_quality_gate=DataQualityGate(session=session),
+        )
 
     def run_backtest(
         self,
@@ -671,19 +769,15 @@ class BacktestService:
             if strategy is None:
                 raise ValueError(f"Strategy {strategy_id} not found")
 
-            backtest = Backtest(
-                strategy_id=strategy_id,
-                config=config,
-            )
-            session.add(backtest)
-            session.commit()
-            session.refresh(backtest)
-
-            engine = self._get_engine()
-            symbols = strategy.config.get("symbols", [])
+            symbols = [
+                str(symbol).strip().upper()
+                for symbol in strategy.config.get("symbols", [])
+                if str(symbol).strip()
+            ]
             if not symbols:
                 raise ValueError("Strategy has no symbols configured")
 
+            engine = self._get_engine(config, session)
             result = engine.run(
                 strategy=strategy,
                 symbols=symbols,
@@ -692,7 +786,13 @@ class BacktestService:
             )
             result = self._json_safe_metrics(result)
 
-            backtest.metrics = result
+            backtest = Backtest(
+                strategy_id=strategy_id,
+                config=dict(config),
+                metrics=result,
+            )
+            session.add(backtest)
+            session.flush()
             session.commit()
 
             self._persist_trades_and_snapshots(
