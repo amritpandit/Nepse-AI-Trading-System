@@ -128,6 +128,8 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     return {
         "close": float(close[-1]),
         "sma_20": float(sma20[-1]) if np.isfinite(sma20[-1]) else None,
+        "previous_sma_20": float(sma20[-2]) if sma20.size >= 2 and np.isfinite(sma20[-2]) else None,
+        "previous_close": float(close[-2]) if close.size >= 2 else None,
         "sma_50": float(sma50[-1]) if np.isfinite(sma50[-1]) else None,
         "sma_200": float(sma200[-1]) if np.isfinite(sma200[-1]) else None,
         "rsi_14": float(rsi[-1]) if np.isfinite(rsi[-1]) else None,
@@ -221,11 +223,12 @@ def _historical_event_study(rows: list[Price]) -> dict[str, Any]:
         if entry_open is None or float(entry_open) <= 0:
             continue
         trigger_dates.append(rows[index].date.isoformat())
-        entry_price = float(entry_open) * (1.0 + SLIPPAGE_BPS / 10_000.0)
+        entry_fill = float(entry_open) * (1.0 + SLIPPAGE_BPS / 10_000.0)
         for horizon in horizons:
             exit_close = float(rows[index + horizon].close)
-            gross_return = exit_close / entry_price - 1.0
-            net_return = gross_return - (2.0 * TRADING_COST_RATE) - (2.0 * SLIPPAGE_BPS / 10_000.0)
+            exit_fill = exit_close * (1.0 - SLIPPAGE_BPS / 10_000.0)
+            gross_return = exit_fill / entry_fill - 1.0
+            net_return = (1.0 + gross_return) * ((1.0 - TRADING_COST_RATE) ** 2) - 1.0
             outcomes[str(horizon)].append(net_return)
 
     summary: dict[str, Any] = {}
@@ -311,7 +314,11 @@ class StockSectorResearchService:
             }
         return result
 
-    def analyze_stock(self, symbol: str) -> dict[str, Any]:
+    def analyze_stock(
+        self,
+        symbol: str,
+        sector_summaries: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         stock = self.session.scalar(
             sa.select(Stock).where(Stock.symbol == symbol.strip().upper())
         )
@@ -327,7 +334,7 @@ class StockSectorResearchService:
 
         indicators = _indicator_snapshot(clean)
         market = _market_regime(self.session)
-        sectors = self._sector_summary()
+        sectors = sector_summaries if sector_summaries is not None else self._sector_summary()
         sector = sectors.get(str(stock.sector)) if stock.sector else None
         sector_rs = sector.get("relative_strength_vs_nepse_20d") if sector else None
 
@@ -357,9 +364,14 @@ class StockSectorResearchService:
         rsi = indicators["rsi_14"]
         macd = indicators["macd"]
         macd_signal = indicators["macd_signal"]
+        previous_sma20 = indicators.get("previous_sma_20")
+        previous_close = indicators.get("previous_close")
         sell_trigger = (
             sma20 is not None
+            and previous_sma20 is not None
+            and previous_close is not None
             and indicators["close"] < sma20
+            and previous_close >= previous_sma20
             and indicators["volume_ratio_20d"] is not None
             and indicators["volume_ratio_20d"] >= 1.2
         )
@@ -440,7 +452,7 @@ class StockSectorResearchService:
         results: list[dict[str, Any]] = []
         for stock in stocks:
             try:
-                analysis = self.analyze_stock(stock.symbol)
+                analysis = self.analyze_stock(stock.symbol, sector_summaries=sectors)
                 analysis["sector_context"] = sectors.get(str(stock.sector)) if stock.sector else None
                 results.append(analysis)
             except ValueError:
