@@ -31,8 +31,8 @@ def page_research() -> None:
         "Research-only output. No NEPSE Index BUY/SELL orders are generated and no broker orders are placed."
     )
 
-    tab_market, tab_sectors, tab_stocks, tab_detail, tab_data = st.tabs(
-        ["Market Regime", "Sector Ranking", "Stock Signals", "Stock Detail & History", "Historical Data"]
+    tab_market, tab_sectors, tab_stocks, tab_detail, tab_history, tab_data = st.tabs(
+        ["Market Regime", "Sector Ranking", "Stock Signals", "Stock Detail & History", "Saved Signal Ledger", "Historical Data"]
     )
 
     with tab_market:
@@ -104,6 +104,19 @@ def page_research() -> None:
                 else:
                     st.warning("No eligible ordinary shares with usable history were found.")
                 st.caption(data.get("data_disclaimer", ""))
+        if st.button("Scan and Save Daily Signals", key="research_save_signals"):
+            try:
+                response = requests.post(
+                    f"{API_BASE}/research/signals/refresh",
+                    params={"limit": scan_limit},
+                    headers=auth_headers(),
+                    timeout=120,
+                )
+                response.raise_for_status()
+                st.success("Daily research signal snapshots saved.")
+                st.json(response.json())
+            except requests.RequestException as exc:
+                st.error(f"Could not save signal snapshots: {exc}")
 
     with tab_detail:
         symbol = st.text_input("Listed stock symbol", value="NABIL", key="research_detail_symbol").strip().upper()
@@ -352,6 +365,24 @@ def page_research() -> None:
                     "Event study: breakout signal at close, entry at the next session open, "
                     "fixed-horizon close exits; assumes the displayed commission and slippage. "
                     "It is not a full portfolio backtest and does not guarantee future results."
+                )
+
+    with tab_history:
+        st.subheader("Saved daily stock signals")
+        history_symbol = st.text_input(
+            "Filter by stock symbol (optional)", value="", key="research_history_symbol"
+        ).strip().upper()
+        history_params = {"symbol": history_symbol} if history_symbol else None
+        if st.button("Load Saved Signal History", key="research_history_refresh"):
+            data = _get_json("/research/signals/history", params=history_params)
+            if data:
+                history_rows = data.get("signals", [])
+                render_table(
+                    pd.DataFrame(history_rows),
+                    key="research_saved_signals",
+                    name="saved_stock_signal_history",
+                    height=520,
+                    empty_msg="No saved research signals yet. Run and save a stock scan first.",
                 )
 
     with tab_data:
