@@ -675,6 +675,35 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
         rolling_std20[index] = float(np.std(close[index - 19 : index + 1], ddof=0))
     result: list[dict[str, Any]] = []
     for index, row in enumerate(sample):
+        previous_open = float(sample[index - 1].open) if index >= 1 else None
+        previous_close = float(sample[index - 1].close) if index >= 1 else None
+        current_open = float(row.open)
+        current_close = float(row.close)
+        current_high = float(row.high)
+        current_low = float(row.low)
+        bullish_engulfing = (
+            index >= 1
+            and previous_close is not None
+            and previous_open is not None
+            and previous_close < previous_open
+            and current_close > current_open
+            and current_open <= previous_close
+            and current_close >= previous_open
+        )
+        bearish_engulfing = (
+            index >= 1
+            and previous_close is not None
+            and previous_open is not None
+            and previous_close > previous_open
+            and current_close < current_open
+            and current_open >= previous_close
+            and current_close <= previous_open
+        )
+        body = abs(current_close - current_open)
+        lower_wick = min(current_open, current_close) - current_low
+        upper_wick = current_high - max(current_open, current_close)
+        hammer = body > 0 and lower_wick >= 2 * body and upper_wick <= body
+        shooting_star = body > 0 and upper_wick >= 2 * body and lower_wick <= body
         result.append(
             {
                 "date": row.date.isoformat(),
@@ -698,6 +727,17 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
                     else None
                 ),
                 "rsi_14": float(rsi[index]) if np.isfinite(rsi[index]) else None,
+                "atr_14": float(atr14[index]) if np.isfinite(atr14[index]) else None,
+                "adx_14": float(adx14[index]) if np.isfinite(adx14[index]) else None,
+                "plus_di_14": float(plus_di[index]),
+                "minus_di_14": float(minus_di[index]),
+                "stoch_k_14": float(stoch_k[index]) if np.isfinite(stoch_k[index]) else None,
+                "stoch_d_3": float(stoch_d[index]) if np.isfinite(stoch_d[index]) else None,
+                "obv": float(obv[index]),
+                "bullish_engulfing": bullish_engulfing,
+                "bearish_engulfing": bearish_engulfing,
+                "hammer": hammer,
+                "shooting_star": shooting_star,
                 "atr_14": float(atr14[index]) if np.isfinite(atr14[index]) else None,
                 "adx_14": float(adx14[index]) if np.isfinite(adx14[index]) else None,
                 "plus_di_14": float(plus_di[index]),
@@ -1355,8 +1395,35 @@ class StockSectorResearchService:
             }
 
         atr = indicators["atr_14"]
-        suggested_stop = (
-            round(indicators["close"] - 2.0 * atr, 2) if atr is not None else None
+        last_close = float(indicators["close"])
+        if atr is None or atr <= 0:
+            suggested_stop = None
+            suggested_target = None
+        elif trigger == "SELL_TRIGGER":
+            # SELL is a reduce/exit review for an existing long; never a short-sale order.
+            suggested_stop = round(last_close + 2.0 * atr, 2)
+            suggested_target = round(last_close - 4.0 * atr, 2)
+        elif trigger == "BUY_TRIGGER":
+            suggested_stop = round(last_close - 2.0 * atr, 2)
+            suggested_target = round(last_close + 4.0 * atr, 2)
+        else:
+            suggested_stop = None
+            suggested_target = None
+        high60 = indicators.get("high_60d")
+        low60 = indicators.get("low_60d")
+        fib_range = (
+            float(high60) - float(low60)
+            if high60 is not None and low60 is not None
+            else None
+        )
+        fibonacci_levels = (
+            {
+                "retracement_38_2": round(float(high60) - 0.382 * fib_range, 2),
+                "retracement_50_0": round(float(high60) - 0.5 * fib_range, 2),
+                "retracement_61_8": round(float(high60) - 0.618 * fib_range, 2),
+            }
+            if fib_range is not None and fib_range > 0
+            else {}
         )
         return {
             "symbol": stock.symbol,
@@ -1384,11 +1451,13 @@ class StockSectorResearchService:
                 "shooting_star": indicators.get("shooting_star"),
                 "prior_20_session_high": indicators.get("previous_high_20d"),
                 "prior_20_session_low": indicators.get("previous_low_20d"),
+                "high_60d": high60,
+                "low_60d": low60,
+                "fibonacci_retracement_levels": fibonacci_levels,
             },
             "reference_stop_level": suggested_stop,
-            "reference_target_level": (
-                round(indicators["close"] + 4.0 * atr, 2) if atr is not None else None
-            ),
+            "reference_target_level": suggested_target,
+            "reference_risk_reward_ratio": 2.0 if suggested_stop is not None else None,
             "price_history_for_chart": _chart_series(clean, smc),
             "data_freshness": {
                 "status": data_freshness,
