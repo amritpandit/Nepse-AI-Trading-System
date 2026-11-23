@@ -396,5 +396,5 @@ def test_saved_score_signal_is_idempotent_and_not_probability(db_session: Sessio
     assert second["snapshots_saved"] == 1
     assert len(rows) == 1
     assert rows[0].signal_type == "SELL_TRIGGER"
-    assert rows[0].value == -0.7
+    assert abs(float(rows[0].value) + 0.7) < 1e-8
     assert rows[0].confidence is None
