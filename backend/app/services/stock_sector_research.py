@@ -443,21 +443,31 @@ def _score_signal(
     sma20 = indicators.get("sma_20")
     sma50 = indicators.get("sma_50")
     sma200 = indicators.get("sma_200")
+    adx = indicators.get("adx_14")
+    trend_strength_confirmed = adx is None or adx >= 20.0
     if sma20 is not None and sma50 is not None and close > sma20 > sma50:
-        points = 20 if sma200 is None or sma50 > sma200 else 15
+        points = 20 if (sma200 is None or sma50 > sma200) and trend_strength_confirmed else 15
         record(
             "trend_structure",
             20,
             buy_points=points,
-            evidence={"reason": "Close above SMA20 and SMA20 above SMA50"},
+            evidence={
+                "reason": "Close above SMA20 and SMA20 above SMA50",
+                "adx_14": adx,
+                "adx_trend_strength_confirmed": trend_strength_confirmed,
+            },
         )
     elif sma20 is not None and sma50 is not None and close < sma20 < sma50:
-        points = 20 if sma200 is None or sma50 < sma200 else 15
+        points = 20 if (sma200 is None or sma50 < sma200) and trend_strength_confirmed else 15
         record(
             "trend_structure",
             20,
             sell_points=points,
-            evidence={"reason": "Close below SMA20 and SMA20 below SMA50"},
+            evidence={
+                "reason": "Close below SMA20 and SMA20 below SMA50",
+                "adx_14": adx,
+                "adx_trend_strength_confirmed": trend_strength_confirmed,
+            },
         )
     elif sma20 is not None and close > sma20:
         record("trend_structure", 20, buy_points=8, evidence={"reason": "Close above SMA20 only"})
@@ -467,10 +477,22 @@ def _score_signal(
         record("trend_structure", 20, evidence={"reason": "No usable moving-average trend"})
 
     rsi = indicators.get("rsi_14")
+    stoch_k = indicators.get("stoch_k_14")
+    stoch_d = indicators.get("stoch_d_3")
+    stoch_bullish = stoch_k is None or stoch_d is None or stoch_k >= stoch_d
+    stoch_bearish = stoch_k is not None and stoch_d is not None and stoch_k <= stoch_d
     if rsi is not None and 55 <= rsi <= 70:
-        record("rsi_momentum", 10, buy_points=10, evidence={"rsi_14": rsi})
+        points = 10 if stoch_bullish else 5
+        record(
+            "rsi_momentum", 10, buy_points=points,
+            evidence={"rsi_14": rsi, "stoch_k_14": stoch_k, "stoch_d_3": stoch_d},
+        )
     elif rsi is not None and rsi < 40:
-        record("rsi_momentum", 10, sell_points=10, evidence={"rsi_14": rsi})
+        points = 10 if stoch_bearish or stoch_k is None else 5
+        record(
+            "rsi_momentum", 10, sell_points=points,
+            evidence={"rsi_14": rsi, "stoch_k_14": stoch_k, "stoch_d_3": stoch_d},
+        )
     elif rsi is not None and rsi > 75:
         record(
             "rsi_momentum",
@@ -498,19 +520,22 @@ def _score_signal(
 
     volume_ratio = indicators.get("volume_ratio_20d")
     daily_change = indicators.get("daily_return")
+    obv_rising = indicators.get("obv_rising_20d")
     if volume_ratio is not None and volume_ratio >= 1.5 and daily_change is not None and daily_change > 0:
+        points = 10 if obv_rising is not False else 5
         record(
             "volume_confirmation",
             10,
-            buy_points=10,
-            evidence={"volume_ratio_20d": volume_ratio},
+            buy_points=points,
+            evidence={"volume_ratio_20d": volume_ratio, "obv_rising_20d": obv_rising},
         )
     elif volume_ratio is not None and volume_ratio >= 1.2 and daily_change is not None and daily_change < 0:
+        points = 10 if obv_rising is not True else 5
         record(
             "volume_confirmation",
             10,
-            sell_points=10,
-            evidence={"volume_ratio_20d": volume_ratio},
+            sell_points=points,
+            evidence={"volume_ratio_20d": volume_ratio, "obv_rising_20d": obv_rising},
         )
     else:
         record(
@@ -684,7 +709,7 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
                 "minus_di_14": float(minus_di[index]),
                 "stoch_k_14": float(stoch_k[index]) if np.isfinite(stoch_k[index]) else None,
                 "stoch_d_3": float(stoch_d[index]) if np.isfinite(stoch_d[index]) else None,
-                "obv_index_100": float(obv_index[index]),
+                "obv": float(obv[index]),
             }
         )
     return result
