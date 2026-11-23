@@ -206,8 +206,10 @@ def _sell_trigger_at(index: int, closes: np.ndarray, volumes: np.ndarray) -> boo
     )
 
 
-def _historical_event_study(rows: list[Price]) -> dict[str, Any]:
-    """Evaluate breakout entries at next open with 5/10/20-session outcomes."""
+def _historical_event_study(
+    rows: list[Price], benchmark_rows: list[NEPSEIndex] | None = None
+) -> dict[str, Any]:
+    """Evaluate stock BUY/SELL events at next open and compare BUYs with NEPSE."""
     if len(rows) < 75:
         return {"sample_count": 0, "reason": "At least 75 clean observations required"}
     closes = np.asarray([float(row.close) for row in rows], dtype=float)
@@ -215,7 +217,12 @@ def _historical_event_study(rows: list[Price]) -> dict[str, Any]:
     volumes = np.asarray([float(row.volume or 0) for row in rows], dtype=float)
     horizons = (5, 10, 20)
     outcomes: dict[str, list[float]] = {str(horizon): [] for horizon in horizons}
+    benchmark_outcomes: dict[str, list[float]] = {str(horizon): [] for horizon in horizons}
+    excess_outcomes: dict[str, list[float]] = {str(horizon): [] for horizon in horizons}
+    sell_following: dict[str, list[float]] = {str(horizon): [] for horizon in horizons}
+    benchmark_by_date = {row.date: row for row in benchmark_rows or []}
     trigger_dates: list[str] = []
+    sell_trigger_dates: list[str] = []
     for index in range(50, len(rows) - max(horizons) - 1):
         if not _buy_trigger_at(index, closes, highs, volumes):
             continue
@@ -230,9 +237,33 @@ def _historical_event_study(rows: list[Price]) -> dict[str, Any]:
             gross_return = exit_fill / entry_fill - 1.0
             net_return = (1.0 + gross_return) * ((1.0 - TRADING_COST_RATE) ** 2) - 1.0
             outcomes[str(horizon)].append(net_return)
+            benchmark_entry = benchmark_by_date.get(rows[index + 1].date)
+            benchmark_exit = benchmark_by_date.get(rows[index + horizon].date)
+            if (
+                benchmark_entry is not None
+                and benchmark_entry.open is not None
+                and benchmark_entry.open > 0
+                and benchmark_exit is not None
+            ):
+                benchmark_return = float(benchmark_exit.close) / float(benchmark_entry.open) - 1.0
+                benchmark_outcomes[str(horizon)].append(benchmark_return)
+                excess_outcomes[str(horizon)].append(net_return - benchmark_return)
+
+    for index in range(21, len(rows) - max(horizons) - 1):
+        if not _sell_trigger_at(index, closes, volumes):
+            continue
+        sell_trigger_dates.append(rows[index].date.isoformat())
+        for horizon in horizons:
+            entry_open = rows[index + 1].open
+            exit_close = float(rows[index + horizon].close)
+            if entry_open is not None and float(entry_open) > 0:
+                sell_following[str(horizon)].append(exit_close / float(entry_open) - 1.0)
 
     summary: dict[str, Any] = {}
     for horizon, values in outcomes.items():
+        benchmark_values = benchmark_outcomes[horizon]
+        excess_values = excess_outcomes[horizon]
+        sell_values = sell_following[horizon]
         summary[f"forward_{horizon}d"] = {
             "sample_count": len(values),
             "win_rate": (
@@ -242,16 +273,35 @@ def _historical_event_study(rows: list[Price]) -> dict[str, Any]:
             "median_net_return": float(statistics.median(values)) if values else None,
             "best_net_return": max(values) if values else None,
             "worst_net_return": min(values) if values else None,
+            "nepse_benchmark_sample_count": len(benchmark_values),
+            "mean_nepse_index_return": (
+                float(statistics.mean(benchmark_values)) if benchmark_values else None
+            ),
+            "mean_excess_vs_nepse": (
+                float(statistics.mean(excess_values)) if excess_values else None
+            ),
+            "sell_trigger_following_return_sample_count": len(sell_values),
+            "mean_return_after_sell_trigger": (
+                float(statistics.mean(sell_values)) if sell_values else None
+            ),
+            "negative_return_share_after_sell_trigger": (
+                sum(1 for value in sell_values if value < 0) / len(sell_values)
+                if sell_values else None
+            ),
         }
     return {
         "method": "breakout event study; entry at next session open; fixed-horizon close exits",
         "trigger_count": len(trigger_dates),
         "first_trigger_date": trigger_dates[0] if trigger_dates else None,
         "last_trigger_date": trigger_dates[-1] if trigger_dates else None,
+        "sell_trigger_count": len(sell_trigger_dates),
+        "first_sell_trigger_date": sell_trigger_dates[0] if sell_trigger_dates else None,
+        "last_sell_trigger_date": sell_trigger_dates[-1] if sell_trigger_dates else None,
         "assumptions": {
             "one_way_commission_rate": TRADING_COST_RATE,
             "slippage_bps_per_side": SLIPPAGE_BPS,
             "corporate_action_adjusted": False,
+            "benchmark": "NEPSE Index; context only, not a tradable security",
         },
         **summary,
     }
@@ -435,6 +485,14 @@ class StockSectorResearchService:
             "market_not_bearish": market["regime"] in ("bullish", "sideways"),
         }
         score = sum(1 for value in confirmations.values() if value)
+        benchmark_rows = self.session.scalars(
+            sa.select(NEPSEIndex)
+            .where(
+                NEPSEIndex.date >= clean[0].date,
+                NEPSEIndex.date <= clean[-1].date,
+            )
+            .order_by(NEPSEIndex.date)
+        ).all()
         atr = indicators["atr_14"]
         suggested_stop = (
             round(indicators["close"] - 2.0 * atr, 2) if atr is not None else None
@@ -453,7 +511,7 @@ class StockSectorResearchService:
             "sector_context": sector,
             "indicators": indicators,
             "reference_stop_level": suggested_stop,
-            "historical_event_study": _historical_event_study(clean),
+            "historical_event_study": _historical_event_study(clean, list(benchmark_rows)),
             "data_quality": {
                 "status": "warning" if warnings or discontinuity["flagged"] else "usable",
                 "warnings": warnings,
