@@ -195,6 +195,32 @@ class TestBacktestEngine:
         expected = float(np.mean(returns) / np.std(returns, ddof=1) * (252**0.5))
         assert engine._calculate_sharpe(returns) == expected
 
+
+    def test_sortino_uses_downside_deviation_across_all_days(self) -> None:
+        engine = BacktestEngine()
+        returns = [0.10, -0.05, 0.03, -0.02]
+        downside_deviation = float(np.sqrt(np.mean(np.square(np.minimum(returns, 0.0)))))
+        expected = float(np.mean(returns) / downside_deviation * np.sqrt(252))
+        curve = [
+            {"date": "2024-01-01", "equity": Decimal("100"), "cash": Decimal("100"), "positions_value": Decimal("0")},
+            {"date": "2024-01-02", "equity": Decimal("110"), "cash": Decimal("110"), "positions_value": Decimal("0")},
+            {"date": "2024-01-03", "equity": Decimal("104.5"), "cash": Decimal("104.5"), "positions_value": Decimal("0")},
+            {"date": "2024-01-04", "equity": Decimal("107.635"), "cash": Decimal("107.635"), "positions_value": Decimal("0")},
+            {"date": "2024-01-05", "equity": Decimal("105.4823"), "cash": Decimal("105.4823"), "positions_value": Decimal("0")},
+        ]
+        metrics = engine._calculate_metrics(curve, [])
+        assert metrics["sortino_ratio"] == round(expected, 4)
+
+    def test_metrics_use_configured_initial_capital_as_baseline(self) -> None:
+        engine = BacktestEngine()
+        curve = [
+            {"date": "2024-01-01", "equity": Decimal("105"), "cash": Decimal("5"), "positions_value": Decimal("100")},
+            {"date": "2024-01-02", "equity": Decimal("95"), "cash": Decimal("5"), "positions_value": Decimal("90")},
+        ]
+        metrics = engine._calculate_metrics(curve, [], initial_capital=Decimal("100"))
+        assert metrics["total_return"] == -0.05
+        assert metrics["max_drawdown"] == round((105 - 95) / 105, 6)
+
     def test_annualized_return_is_compounded(self) -> None:
         engine = BacktestEngine()
         equity_curve = [
