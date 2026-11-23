@@ -119,6 +119,8 @@ class NepalMarketDataImporter:
         """Import one bounded catalogue batch; repeat with next_offset until done."""
         if offset < 0 or not 1 <= batch_size <= 15:
             raise ValueError("offset must be >= 0 and batch_size must be between 1 and 15")
+        if symbols and len([symbol for symbol in symbols if symbol.strip()]) > batch_size:
+            raise ValueError("explicit symbols cannot exceed batch_size")
         start = _parse_date(start_date) if start_date else None
         end = _parse_date(end_date) if end_date else None
         if start_date and start is None:
@@ -130,6 +132,7 @@ class NepalMarketDataImporter:
 
         started = datetime.now(UTC)
         catalogue = self.list_tradable_equities()
+        catalogue_count = len(catalogue)
         if symbols:
             requested = {symbol.strip().upper() for symbol in symbols if symbol.strip()}
             catalogue = [
@@ -247,14 +250,14 @@ class NepalMarketDataImporter:
                 session.commit()
 
         next_offset = None
-        if not symbols and offset + len(catalogue) < len(self.list_tradable_equities()):
+        if not symbols and offset + len(catalogue) < catalogue_count:
             next_offset = offset + len(catalogue)
 
         return {
             "source": "nepal-market-data",
             "attribution": DATASET_ATTRIBUTION,
             "corporate_action_adjusted": False,
-            "catalogue_tradable_equities": len(self.list_tradable_equities()),
+            "catalogue_tradable_equities": catalogue_count,
             "batch_offset": offset,
             "batch_size": batch_size,
             "symbols_requested": len(catalogue),
