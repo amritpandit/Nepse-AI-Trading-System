@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
+import pytest
 from app.models.benchmark import NEPSEIndex, SectorIndex
 from app.models.price import Price
 from app.models.stock import Stock
@@ -260,6 +261,18 @@ class TestBacktestEngine:
 
 
 class TestBenchmarkService:
+    def test_backtest_refuses_to_run_without_historical_prices(self) -> None:
+        engine = BacktestEngine()
+        engine._get_trading_dates = lambda start_date, end_date, symbols: []
+        strategy = SimpleNamespace(
+            id=1,
+            name="empty-history-test",
+            version="1",
+            config={"symbols": ["TEST"]},
+        )
+        with pytest.raises(ValueError, match="No historical price observations"):
+            engine.run(strategy, ["TEST"], "2024-01-01", "2024-12-31")
+
     def test_get_trading_dates_uses_observed_price_dates(self, db_session: Session) -> None:
         _seed_price_data(db_session, "TEST", "2024-01-01", count=5)
         engine = BacktestEngine()
