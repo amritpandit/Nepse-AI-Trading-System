@@ -275,7 +275,7 @@ class TestBenchmarkService:
 
     def test_get_trading_dates_uses_observed_price_dates(self, db_session: Session) -> None:
         _seed_price_data(db_session, "TEST", "2024-01-01", count=5)
-        engine = BacktestEngine()
+        engine = BacktestEngine(session=db_session)
         dates = engine._get_trading_dates("2024-01-01", "2024-01-05", ["TEST"])
         assert dates == [
             date(2024, 1, 1),
