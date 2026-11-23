@@ -261,27 +261,54 @@ class StockSectorResearchService:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def _load_stock_history(self, stock: Stock, limit: int = 800) -> list[Price]:
+    def _load_histories(
+        self, stocks: list[Stock], limit: int
+    ) -> dict[int, list[Price]]:
+        stock_ids = [stock.id for stock in stocks if stock.id is not None]
+        if not stock_ids:
+            return {}
+        ranked = (
+            sa.select(
+                Price.id.label("price_id"),
+                sa.func.row_number()
+                .over(
+                    partition_by=Price.stock_id,
+                    order_by=(Price.date.desc(), Price.id.desc()),
+                )
+                .label("row_number"),
+            )
+            .where(Price.stock_id.in_(stock_ids))
+            .subquery()
+        )
         rows = self.session.scalars(
             sa.select(Price)
-            .where(Price.stock_id == stock.id)
-            .order_by(Price.date.desc())
-            .limit(limit)
+            .join(ranked, Price.id == ranked.c.price_id)
+            .where(ranked.c.row_number <= limit)
+            .order_by(Price.stock_id, Price.date)
         ).all()
-        return _valid_history(list(reversed(rows)))
+        grouped: dict[int, list[Price]] = {}
+        for row in rows:
+            grouped.setdefault(row.stock_id, []).append(row)
+        return {stock_id: _valid_history(history) for stock_id, history in grouped.items()}
 
-    def _sector_summary(self) -> dict[str, dict[str, Any]]:
-        stocks = self.session.scalars(
+    def _load_stock_history(self, stock: Stock, limit: int = 800) -> list[Price]:
+        return self._load_histories([stock], limit).get(stock.id, [])
+
+    def _sector_summary(
+        self, eligible_stocks: list[Stock] | None = None
+    ) -> dict[str, dict[str, Any]]:
+        stocks = eligible_stocks or self.session.scalars(
             sa.select(Stock).where(
                 Stock.instrument_type == "ordinary",
                 Stock.is_active.is_(True),
                 Stock.sector.is_not(None),
             )
         ).all()
+        histories = self._load_histories(stocks, 70)
         grouped: dict[str, list[float]] = {}
         grouped60: dict[str, list[float]] = {}
         for stock in stocks:
-            history = self._load_stock_history(stock, limit=70)
+            history = histories.get(stock.id, [])
             clean, event = _clean_after_latest_discontinuity(history)
             if event["flagged"]:
                 continue
@@ -318,6 +345,7 @@ class StockSectorResearchService:
         self,
         symbol: str,
         sector_summaries: dict[str, dict[str, Any]] | None = None,
+        history: list[Price] | None = None,
     ) -> dict[str, Any]:
         stock = self.session.scalar(
             sa.select(Stock).where(Stock.symbol == symbol.strip().upper())
@@ -327,8 +355,8 @@ class StockSectorResearchService:
         if stock.instrument_type != "ordinary" or not stock.is_active:
             raise ValueError("Only active listed ordinary shares are eligible for stock triggers")
 
-        history = self._load_stock_history(stock)
-        clean, discontinuity = _clean_after_latest_discontinuity(history)
+        stock_history = history if history is not None else self._load_stock_history(stock)
+        clean, discontinuity = _clean_after_latest_discontinuity(stock_history)
         if not clean:
             raise ValueError("No valid OHLCV history is available for this stock")
 
@@ -448,11 +476,16 @@ class StockSectorResearchService:
             )
             .order_by(Stock.symbol)
         ).all()
-        sectors = self._sector_summary()
+        sectors = self._sector_summary(stocks)
+        histories = self._load_histories(stocks, 800)
         results: list[dict[str, Any]] = []
         for stock in stocks:
             try:
-                analysis = self.analyze_stock(stock.symbol, sector_summaries=sectors)
+                analysis = self.analyze_stock(
+                    stock.symbol,
+                    sector_summaries=sectors,
+                    history=histories.get(stock.id, []),
+                )
                 analysis["sector_context"] = sectors.get(str(stock.sector)) if stock.sector else None
                 results.append(analysis)
             except ValueError:
