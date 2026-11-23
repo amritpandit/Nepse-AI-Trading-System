@@ -95,8 +95,10 @@ class BacktestEngine:
         partial_fill_threshold: Decimal = Decimal("0.3"),
         execution_delay_bars: int = 1,
         data_quality_gate: DataQualityGate | None = None,
+        session: Session | None = None,
     ) -> None:
         self.initial_capital = initial_capital
+        self._session = session
         self.commission_rate = commission_rate
         self.slippage_bps = slippage_bps
         self.min_volume_threshold = min_volume_threshold
@@ -109,11 +111,15 @@ class BacktestEngine:
         self,
         strategy: Strategy,
         symbols: list[str],
-        start_date: str | None,
-        end_date: str | None,
+        start_date: str | date | None,
+        end_date: str | date | None,
     ) -> dict[str, Any]:
-        start_date = start_date or "2020-01-01"
-        end_date = end_date or "2024-12-31"
+        start_date = (
+            start_date.isoformat() if isinstance(start_date, date) else start_date
+        ) or "2020-01-01"
+        end_date = (
+            end_date.isoformat() if isinstance(end_date, date) else end_date
+        ) or "2024-12-31"
         positions: dict[str, Position] = {}
         cash = self.initial_capital
         equity_curve: list[dict[str, Any]] = []
@@ -390,8 +396,7 @@ class BacktestEngine:
         if not normalized_symbols:
             return []
 
-        session = SessionLocal()
-        try:
+        with session_scope(self._session) as session:
             observed_dates = session.scalars(
                 sa.select(Price.date)
                 .join(Stock, Price.stock_id == Stock.id)
@@ -412,12 +417,9 @@ class BacktestEngine:
                 if holiday is None or holiday.is_trading_day:
                     trading_dates.append(observed_date)
             return trading_dates
-        finally:
-            session.close()
 
     def _get_price(self, symbol: str, date_str: str) -> dict[str, Any] | None:
-        session = SessionLocal()
-        try:
+        with session_scope(self._session) as session:
             stock = session.scalar(sa.select(Stock).where(Stock.symbol == symbol.upper()))
             if stock is None:
                 return None
@@ -436,8 +438,6 @@ class BacktestEngine:
                 "close": float(price.close) if price.close else None,
                 "volume": price.volume,
             }
-        finally:
-            session.close()
 
     def _get_features(self, symbol: str, date_str: str) -> dict[str, float | None] | None:
         try:
@@ -777,6 +777,7 @@ class BacktestService:
             slippage_bps=Decimal(str(config.get("slippage_bps", 5.0))),
             execution_delay_bars=int(config.get("execution_delay_bars", 1)),
             data_quality_gate=DataQualityGate(session=session),
+            session=session,
         )
 
     def run_backtest(
