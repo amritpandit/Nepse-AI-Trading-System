@@ -135,7 +135,7 @@ def page_research() -> None:
                                 "Factor": component.replace("_", " ").title(),
                                 "BUY points": item.get("buy_points", item.get("weight") if item.get("side") == "buy" else 0),
                                 "SELL points": item.get("sell_points", item.get("weight") if item.get("side") == "sell" else 0),
-                                "Evidence": item.get("reason") or item.get("methodology") or item.get("histogram") or item.get("value") or item.get("ratio") or "",
+                                "Evidence": item.get("reason") or item.get("methodology") or item.get("relative_strength_20d") or item.get("rsi_14") or item.get("macd_histogram") or item.get("volume_ratio_20d") or "",
                             }
                         )
                     render_table(
@@ -280,7 +280,48 @@ def page_research() -> None:
                         "execution_note": data.get("execution_note"),
                     }
                 )
-                st.subheader("Historical BUY/SELL event outcomes")
+                st.subheader("Historical score-model validation")
+                validation = data.get("historical_score_validation", {})
+                st.write(
+                    f"Validation status: {validation.get('status', 'unavailable')} · "
+                    f"Out-of-sample period: {validation.get('test_start_date') or '—'} "
+                    f"to {validation.get('test_end_date') or '—'}"
+                )
+                if validation.get("status") == "evaluated":
+                    st.caption(
+                        f"Score model: {validation.get('scoring_model_version')} · "
+                        f"Warm-up/development observations: {validation.get('training_observations_for_warmup')} · "
+                        f"Test observations: {validation.get('test_observations')} · "
+                        f"BUY triggers: {validation.get('buy_trigger_count')} · "
+                        f"SELL triggers: {validation.get('sell_trigger_count')}"
+                    )
+                    validation_rows = []
+                    validation_results = validation.get("results", {})
+                    for horizon in (5, 10, 20):
+                        item = validation_results.get(f"forward_{horizon}d", {})
+                        validation_rows.append(
+                            {
+                                "Horizon": f"{horizon} sessions",
+                                "BUY samples": item.get("buy_sample_count"),
+                                "BUY win rate": item.get("buy_win_rate"),
+                                "BUY mean net return": item.get("buy_mean_net_return"),
+                                "NEPSE mean return": item.get("nepse_mean_return"),
+                                "Excess vs NEPSE": item.get("mean_excess_vs_nepse"),
+                                "SELL samples": item.get("sell_sample_count"),
+                                "Negative return share after SELL": item.get("negative_return_share_after_sell"),
+                            }
+                        )
+                    render_table(
+                        pd.DataFrame(validation_rows),
+                        key="research_score_validation",
+                        name=f"{symbol}_score_validation",
+                        height=230,
+                    )
+                    st.caption(validation.get("warning", ""))
+                else:
+                    st.info(validation.get("reason", "Historical score validation is not available."))
+
+                st.subheader("Historical breakout event study (separate baseline)")
                 history = data.get("historical_event_study", {})
                 summary_rows = []
                 for horizon in (5, 10, 20):
