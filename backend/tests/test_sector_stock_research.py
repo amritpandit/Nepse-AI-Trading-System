@@ -16,6 +16,7 @@ from app.services.stock_sector_research import (
     StockSectorResearchService,
     _chart_series,
     _indicator_snapshot,
+    _historical_score_validation,
     _score_signal,
     _smc_snapshot,
 )
@@ -246,3 +247,61 @@ def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -
     assert indicators["macd_histogram"] is not None
     assert len(chart) == 220
     assert {"open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200", "macd", "macd_signal", "rsi_14"} <= set(chart[-1])
+
+
+
+def test_historical_score_validation_uses_chronological_holdout() -> None:
+    stock_rows = []
+    sector_rows = []
+    benchmark_rows = []
+    start = date(2024, 1, 1)
+    for index in range(300):
+        day = start + timedelta(days=index)
+        stock_close = Decimal(str(100.0 + index * 0.5))
+        sector_close = Decimal(str(80.0 + index * 0.7))
+        index_close = Decimal(str(2000.0 + index * 0.2))
+        stock_rows.append(
+            Price(
+                stock_id=1,
+                date=day,
+                open=stock_close - Decimal("0.1"),
+                high=stock_close + Decimal("0.3"),
+                low=stock_close - Decimal("0.3"),
+                close=stock_close,
+                volume=1000,
+            )
+        )
+        sector_rows.append(
+            Price(
+                stock_id=2,
+                date=day,
+                open=sector_close - Decimal("0.1"),
+                high=sector_close + Decimal("0.3"),
+                low=sector_close - Decimal("0.3"),
+                close=sector_close,
+                volume=1200,
+            )
+        )
+        benchmark_rows.append(
+            NEPSEIndex(
+                date=day,
+                open=index_close - Decimal("0.1"),
+                high=index_close + Decimal("0.2"),
+                low=index_close - Decimal("0.2"),
+                close=index_close,
+                volume=100000,
+            )
+        )
+
+    result = _historical_score_validation(
+        stock_rows,
+        benchmark_rows,
+        [sector_rows],
+    )
+
+    assert result["status"] == "evaluated"
+    assert result["validation_method"].startswith("chronological holdout")
+    assert result["test_observations"] == 90
+    assert result["buy_trigger_count"] > 0
+    assert result["results"]["forward_20d"]["buy_sample_count"] > 0
+    assert result["assumptions"]["nepse_index_role"].startswith("benchmark only")
