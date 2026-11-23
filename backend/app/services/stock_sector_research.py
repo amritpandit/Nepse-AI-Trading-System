@@ -583,9 +583,14 @@ def _historical_event_study(
     benchmark_by_date = {row.date: row for row in benchmark_rows or []}
     trigger_dates: list[str] = []
     sell_trigger_dates: list[str] = []
+    last_buy_event = -max(horizons)
+    last_sell_event = -max(horizons)
     for index in range(50, len(rows) - max(horizons) - 1):
+        if index - last_buy_event < max(horizons):
+            continue
         if not _buy_trigger_at(index, closes, highs, volumes):
             continue
+        last_buy_event = index
         entry_open = rows[index + 1].open
         if entry_open is None or float(entry_open) <= 0:
             continue
@@ -610,8 +615,11 @@ def _historical_event_study(
                 excess_outcomes[str(horizon)].append(net_return - benchmark_return)
 
     for index in range(21, len(rows) - max(horizons) - 1):
+        if index - last_sell_event < max(horizons):
+            continue
         if not _sell_trigger_at(index, closes, volumes):
             continue
+        last_sell_event = index
         sell_trigger_dates.append(rows[index].date.isoformat())
         for horizon in horizons:
             entry_open = rows[index + 1].open
@@ -650,7 +658,13 @@ def _historical_event_study(
             ),
         }
     return {
-        "method": "breakout event study; entry at next session open; fixed-horizon close exits",
+        "method": "20-session breakout event study; entry at next session open; fixed-horizon close exits",
+        "scope_warning": (
+            "This historical event study evaluates a separate breakout rule, not the full "
+            "current multi-factor score. Full score-model walk-forward validation must be run "
+            "after sector history and corporate-action adjustments are complete."
+        ),
+        "overlap_control": f"At least {max(horizons)} sessions between same-direction events",
         "trigger_count": len(trigger_dates),
         "first_trigger_date": trigger_dates[0] if trigger_dates else None,
         "last_trigger_date": trigger_dates[-1] if trigger_dates else None,
