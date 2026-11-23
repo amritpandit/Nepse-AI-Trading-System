@@ -146,6 +146,12 @@ class BacktestEngine:
         ).hexdigest()[:36]
 
         dates = self._get_trading_dates(start_date, end_date, symbols)
+        if not dates:
+            raise ValueError(
+                "No historical price observations are available for the selected "
+                f"symbols and date range ({start_date} to {end_date}). "
+                "Import and validate daily OHLCV data before running a backtest."
+            )
 
         for bar_index, dt in enumerate(dates):
             date_str = dt.isoformat()
