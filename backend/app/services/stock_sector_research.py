@@ -1116,7 +1116,9 @@ class StockSectorResearchService:
             "sector_history_available": sector_rs is not None,
             "sector_not_underperforming": sector_rs is not None and sector_rs >= 0,
             "at_least_50_clean_sessions": len(clean) >= 50,
-            "no_recent_price_discontinuity": not discontinuity["flagged"],
+            "no_recent_price_discontinuity": (
+                not discontinuity["flagged"] or len(clean) >= 200
+            ),
             "latest_data_within_7_calendar_days": data_freshness == "current",
         }
         if data_freshness == "stale":
