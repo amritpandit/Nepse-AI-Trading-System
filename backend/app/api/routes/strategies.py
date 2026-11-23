@@ -92,7 +92,7 @@ def run_backtest(
     service = BacktestService(session=db)
     result = service.run_backtest(
         strategy_id=request.strategy_id,
-        config=request.config.model_dump(),
+        config=request.config.model_dump(mode="json"),
     )
     return result
 
