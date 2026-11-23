@@ -1,0 +1,166 @@
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import httpx
+import sqlalchemy as sa
+from app.models.benchmark import NEPSEIndex
+from app.models.price import Price
+from app.models.stock import Stock
+from app.services.nepal_market_data import (
+    INDEX_PATH,
+    REFERENCE_PATH,
+    NepalMarketDataImporter,
+)
+from app.services.stock_sector_research import StockSectorResearchService
+from sqlalchemy.orm import Session
+
+
+def _mock_client() -> httpx.Client:
+    reference = (
+        "symbol,name,source_category,instrument_type,sector,status\n"
+        "NABIL,Nabil Bank Limited,Commercial Bank,ordinary,Commercial Bank,listed\n"
+        "NABILP,Nabil Promoter Share,Promoter Share,promoter_share,,listed\n"
+        "OLDCO,Old Company,Merged,ordinary,,merged\n"
+    )
+    nabil = (
+        "published_date,open,high,low,close,per_change,traded_quantity,traded_amount,status\n"
+        "2024-01-01,500,510,495,505,1,1000,505000,A\n"
+        "2024-01-02,505,515,500,512,1.39,1200,614400,A\n"
+    )
+    index = (
+        "published_date,open,high,low,close,per_change,traded_quantity,traded_amount,status\n"
+        "2024-01-01,2000,2010,1990,2005,0.25,,0,A\n"
+        "2024-01-02,2005,2020,2000,2015,0.50,,0,A\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(REFERENCE_PATH):
+            return httpx.Response(200, text=reference)
+        if request.url.path.endswith(INDEX_PATH):
+            return httpx.Response(200, text=index)
+        if request.url.path.endswith("/data/nepse/NABIL.csv"):
+            return httpx.Response(200, text=nabil)
+        return httpx.Response(404, text="not found")
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_catalogue_excludes_nonordinary_and_merged() -> None:
+    client = _mock_client()
+    importer = NepalMarketDataImporter(client=client)
+    try:
+        rows = importer.list_tradable_equities()
+    finally:
+        client.close()
+    assert [row["symbol"] for row in rows] == ["NABIL"]
+
+
+def test_imports_ohlcv_and_metadata_idempotently(db_session: Session) -> None:
+    client = _mock_client()
+    importer = NepalMarketDataImporter(session=db_session, client=client)
+    try:
+        first = importer.sync_equities(batch_size=1)
+        second = importer.sync_equities(batch_size=1)
+    finally:
+        client.close()
+
+    assert first["symbols"] == ["NABIL"]
+    assert first["rows_inserted"] == 2
+    assert second["rows_inserted"] == 0
+    assert second["rows_updated"] == 2
+
+    stock = db_session.scalar(sa.select(Stock).where(Stock.symbol == "NABIL"))
+    assert stock is not None
+    assert stock.instrument_type == "ordinary"
+    assert stock.sector == "Commercial Bank"
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(Price)) == 2
+
+
+def test_import_dry_run_writes_nothing(db_session: Session) -> None:
+    client = _mock_client()
+    importer = NepalMarketDataImporter(session=db_session, client=client)
+    try:
+        result = importer.sync_equities(batch_size=1, dry_run=True)
+    finally:
+        client.close()
+
+    assert result["dry_run"] is True
+    assert result["rows_inserted"] == 0
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(Stock)) == 0
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(Price)) == 0
+
+
+def test_imports_nepse_index_as_benchmark_only(db_session: Session) -> None:
+    client = _mock_client()
+    importer = NepalMarketDataImporter(session=db_session, client=client)
+    try:
+        result = importer.sync_nepse_index()
+    finally:
+        client.close()
+
+    assert result["series"] == "NEPSE_INDEX"
+    assert result["role"] == "benchmark_only"
+    assert result["inserted"] == 2
+    assert db_session.scalar(sa.select(sa.func.count()).select_from(NEPSEIndex)) == 2
+
+
+def test_stock_analysis_only_emits_stock_trigger_and_sector_context(db_session: Session) -> None:
+    stock = Stock(
+        symbol="TEST",
+        name="Test Commercial Bank",
+        sector="Commercial Bank",
+        instrument_type="ordinary",
+        is_active=True,
+    )
+    db_session.add(stock)
+    db_session.flush()
+    start = date(2024, 1, 1)
+    index_level = 2000.0
+    for i in range(230):
+        close = 100.0 + i * 0.2
+        day = start + timedelta(days=i)
+        db_session.add(
+            Price(
+                stock_id=stock.id,
+                date=day,
+                open=close - 0.1,
+                high=close + 0.2,
+                low=close - 0.2,
+                close=close,
+                volume=1000,
+            )
+        )
+        index_level += 1.0
+        db_session.add(
+            NEPSEIndex(
+                date=day,
+                open=index_level - 1,
+                high=index_level + 1,
+                low=index_level - 2,
+                close=index_level,
+                volume=100000,
+            )
+        )
+    db_session.commit()
+
+    result = StockSectorResearchService(db_session).analyze_stock("TEST")
+    assert result["symbol"] == "TEST"
+    assert result["market_context"]["signal_role"] == "benchmark_only_no_buy_or_sell_orders"
+    assert result["sector_context"]["sector"] == "Commercial Bank"
+    assert result["historical_event_study"]["method"].startswith("breakout event study")
+    assert result["data_quality"]["source_prices_corporate_action_adjusted"] is False
+
+
+def test_promoter_share_is_not_eligible_for_stock_triggers(db_session: Session) -> None:
+    db_session.add(
+        Stock(symbol="TESTP", instrument_type="promoter_share", is_active=True)
+    )
+    db_session.commit()
+    service = StockSectorResearchService(db_session)
+    try:
+        service.analyze_stock("TESTP")
+    except ValueError as exc:
+        assert "ordinary shares" in str(exc)
+    else:
+        raise AssertionError("promoter share must not receive ordinary-share triggers")
