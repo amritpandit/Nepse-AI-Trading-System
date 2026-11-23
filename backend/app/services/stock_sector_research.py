@@ -1038,6 +1038,8 @@ class StockSectorResearchService:
         stock_obj: Stock | None = None,
         market_context: dict[str, Any] | None = None,
         benchmark_rows: list[NEPSEIndex] | None = None,
+        sector_price_histories: list[list[Price]] | None = None,
+        include_historical_validation: bool = True,
     ) -> dict[str, Any]:
         stock = stock_obj or self.session.scalar(
             sa.select(Stock).where(Stock.symbol == symbol.strip().upper())
@@ -1161,6 +1163,32 @@ class StockSectorResearchService:
                 )
                 .order_by(NEPSEIndex.date)
             ).all()
+        if include_historical_validation:
+            if sector_price_histories is None and stock.sector:
+                sector_stocks = self.session.scalars(
+                    sa.select(Stock).where(
+                        Stock.instrument_type == "ordinary",
+                        Stock.is_active.is_(True),
+                        Stock.sector == stock.sector,
+                    )
+                ).all()
+                sector_history_map = self._load_histories(sector_stocks, 800)
+                sector_price_histories = [
+                    sector_history_map.get(member.id, [])
+                    for member in sector_stocks
+                    if member.id != stock.id
+                ]
+            score_validation = _historical_score_validation(
+                clean,
+                list(benchmark_rows),
+                sector_price_histories or [],
+            )
+        else:
+            score_validation = {
+                "status": "not_run_for_bulk_scan",
+                "reason": "Run stock detail to calculate per-stock chronological holdout validation",
+            }
+
         atr = indicators["atr_14"]
         suggested_stop = (
             round(indicators["close"] - 2.0 * atr, 2) if atr is not None else None
@@ -1204,6 +1232,7 @@ class StockSectorResearchService:
                 "max_age_calendar_days_for_new_trigger": 7,
             },
             "historical_event_study": _historical_event_study(clean, list(benchmark_rows)),
+            "historical_score_validation": score_validation,
             "data_quality": {
                 "status": "warning" if warnings or discontinuity["flagged"] else "usable",
                 "warnings": warnings,
@@ -1243,6 +1272,7 @@ class StockSectorResearchService:
                     stock_obj=stock,
                     market_context=market,
                     benchmark_rows=benchmark_rows,
+                    include_historical_validation=False,
                 )
                 analysis["sector_context"] = sectors.get(str(stock.sector)) if stock.sector else None
                 results.append(analysis)
