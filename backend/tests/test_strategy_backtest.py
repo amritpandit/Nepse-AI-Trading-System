@@ -186,14 +186,37 @@ class TestBacktestEngine:
         assert result is not None
         assert abs(result) > 0
 
+    def test_calculate_sharpe_uses_sample_standard_deviation(self) -> None:
+        engine = BacktestEngine()
+        returns = [0.01, -0.01, 0.02, 0.0]
+        expected = float(np.mean(returns) / np.std(returns, ddof=1) * (252**0.5))
+        assert engine._calculate_sharpe(returns) == expected
+
+    def test_annualized_return_is_compounded(self) -> None:
+        engine = BacktestEngine()
+        equity_curve = [
+            {"date": "2024-01-01", "equity": Decimal("100"), "cash": Decimal("100"), "positions_value": Decimal("0")},
+            {"date": "2024-01-02", "equity": Decimal("110"), "cash": Decimal("110"), "positions_value": Decimal("0")},
+            {"date": "2024-01-03", "equity": Decimal("121"), "cash": Decimal("121"), "positions_value": Decimal("0")},
+        ]
+        metrics = engine._calculate_metrics(equity_curve, [])
+        expected = (1.21 ** (252 / 2)) - 1
+        assert metrics["annualized_return"] == round(expected, 6)
+        assert metrics["trading_days"] == 3
+
 
 class TestBenchmarkService:
-    def test_get_trading_dates(self) -> None:
-        from app.services.backtest import BacktestEngine
-
+    def test_get_trading_dates_uses_observed_price_dates(self, db_session: Session) -> None:
+        _seed_price_data(db_session, "TEST", "2024-01-01", count=5)
         engine = BacktestEngine()
         dates = engine._get_trading_dates("2024-01-01", "2024-01-05", ["TEST"])
-        assert len(dates) == 5
+        assert dates == [
+            date(2024, 1, 1),
+            date(2024, 1, 2),
+            date(2024, 1, 3),
+            date(2024, 1, 4),
+            date(2024, 1, 5),
+        ]
 
     def test_calculate_benchmark_metrics(self) -> None:
         service = BenchmarkService()
