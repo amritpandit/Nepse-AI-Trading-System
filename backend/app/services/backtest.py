@@ -356,7 +356,9 @@ class BacktestEngine:
         equity_curve = sorted(equity_curve, key=lambda x: x["date"])
         trades = sorted(trades, key=lambda x: x["timestamp"])
 
-        metrics = self._calculate_metrics(equity_curve, trades)
+        metrics = self._calculate_metrics(
+            equity_curve, trades, initial_capital=self.initial_capital
+        )
         # _calculate_metrics echoes equity_curve/trades back; drop them so the
         # spread below cannot clobber the explicitly json-safe'd versions.
         metric_fields = {
@@ -583,13 +585,20 @@ class BacktestEngine:
         return min(Decimal(str(MAX_FILL_RATE)), max_fill / Decimal(str(desired_qty)))
 
     def _calculate_metrics(
-        self, equity_curve: list[dict[str, Any]], trades: list[dict[str, Any]]
+        self,
+        equity_curve: list[dict[str, Any]],
+        trades: list[dict[str, Any]],
+        initial_capital: Decimal | float | None = None,
     ) -> dict[str, Any]:
         if not equity_curve:
             return {"total_trades": 0, "total_return": 0, "equity_curve": []}
 
         total_trades = len(trades)
-        initial_equity = equity_curve[0]["equity"]
+        initial_equity = (
+            Decimal(str(initial_capital))
+            if initial_capital is not None
+            else equity_curve[0]["equity"]
+        )
         final_equity = equity_curve[-1]["equity"]
 
         total_return = (
@@ -603,7 +612,9 @@ class BacktestEngine:
             if prev > 0:
                 returns.append(float((curr - prev) / prev))
 
-        max_drawdown = self._calculate_max_drawdown(equity_curve)
+        max_drawdown = self._calculate_max_drawdown(
+            equity_curve, initial_equity=initial_equity
+        )
         sharpe = self._calculate_sharpe(returns) if len(returns) >= 2 else None
         return_array = np.asarray(returns, dtype=float)
         annualized_volatility = (
@@ -611,10 +622,13 @@ class BacktestEngine:
             if return_array.size >= 2
             else None
         )
-        downside_returns = return_array[return_array < 0]
+        # Sortino's downside deviation is the root-mean-square shortfall
+        # below the zero-return target across all observations, not the
+        # standard deviation of only the negative observations.
+        downside_shortfalls = np.minimum(return_array, 0.0)
         downside_deviation = (
-            float(np.std(downside_returns, ddof=1))
-            if downside_returns.size >= 2
+            float(np.sqrt(np.mean(np.square(downside_shortfalls))))
+            if return_array.size
             else None
         )
         sortino = (
@@ -661,10 +675,18 @@ class BacktestEngine:
             return [self._json_safe(item) for item in value]
         return value
 
-    def _calculate_max_drawdown(self, equity_curve: list[dict[str, Any]]) -> float:
+    def _calculate_max_drawdown(
+        self,
+        equity_curve: list[dict[str, Any]],
+        initial_equity: Decimal | float | None = None,
+    ) -> float:
         if not equity_curve:
             return 0.0
-        peak = float(equity_curve[0]["equity"])
+        peak = (
+            float(initial_equity)
+            if initial_equity is not None
+            else float(equity_curve[0]["equity"])
+        )
         max_dd = 0.0
         for point in equity_curve:
             equity = float(point["equity"])
