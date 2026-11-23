@@ -42,6 +42,7 @@ DEFAULT_TRAILING_STOP_PCT = 0.10  # 10 % below trailing high
 # ── Execution defaults ──────────────────────────────────────────────
 DAILY_VOLUME_THRESHOLD = 0.3  # max 30 % of daily volume per fill
 MAX_FILL_RATE = 0.7  # cap fill rate at 70 % when volume-constrained
+NEPSE_CONTINUOUS_OPEN_TIME = "11:00:00+05:45"
 
 
 @dataclass
@@ -187,8 +188,10 @@ class BacktestEngine:
                         pending_signals.remove(signal)
                         continue
 
-                    next_open = price_row.get("open") or price_row.get("close")
-                    if not next_open:
+                    # Never substitute the same bar's close for a missing opening
+                    # price; that would introduce look-ahead bias into execution.
+                    next_open = price_row.get("open")
+                    if next_open is None or next_open <= 0:
                         pending_signals.remove(signal)
                         continue
 
@@ -239,7 +242,7 @@ class BacktestEngine:
                                     "action": "BUY",
                                     "quantity": float(actual_qty),
                                     "price": float(actual_price),
-                                    "timestamp": f"{date_str}T09:00:00",
+                                    "timestamp": f"{date_str}T{NEPSE_CONTINUOUS_OPEN_TIME}",
                                     "transaction_cost": float(commission),
                                     "fill_rate": float(fill_rate),
                                 }
@@ -255,8 +258,10 @@ class BacktestEngine:
                     # are available; do not silently discard the unfilled position.
                     if price_row is None:
                         continue
-                    next_open = price_row.get("open") or price_row.get("close")
-                    if not next_open:
+                    # A missing next-session open means the exit remains pending.
+                    # Using this same bar's close would create an optimistic fill.
+                    next_open = price_row.get("open")
+                    if next_open is None or next_open <= 0:
                         continue
 
                     volume = int(price_row.get("volume") or 0)
@@ -276,7 +281,7 @@ class BacktestEngine:
                             "action": "SELL",
                             "quantity": float(actual_qty),
                             "price": float(actual_price),
-                            "timestamp": f"{date_str}T09:00:00",
+                            "timestamp": f"{date_str}T{NEPSE_CONTINUOUS_OPEN_TIME}",
                             "transaction_cost": float(commission),
                             "fill_rate": float(fill_rate),
                         }
@@ -1187,7 +1192,7 @@ class VectorizedBacktestEngine(BacktestEngine):
                                 "action": "BUY",
                                 "quantity": qty,
                                 "price": float(entry_price),
-                                "timestamp": f"{dt}T09:00:00",
+                                "timestamp": f"{dt}T{NEPSE_CONTINUOUS_OPEN_TIME}",
                             }
                         )
 
