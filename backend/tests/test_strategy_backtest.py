@@ -2,8 +2,11 @@
 
 from datetime import date, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
+import numpy as np
 import polars as pl
+import pytest
 from app.models.benchmark import NEPSEIndex, SectorIndex
 from app.models.price import Price
 from app.models.stock import Stock
@@ -186,14 +189,168 @@ class TestBacktestEngine:
         assert result is not None
         assert abs(result) > 0
 
+    def test_calculate_sharpe_uses_sample_standard_deviation(self) -> None:
+        engine = BacktestEngine()
+        returns = [0.01, -0.01, 0.02, 0.0]
+        expected = float(np.mean(returns) / np.std(returns, ddof=1) * (252**0.5))
+        assert engine._calculate_sharpe(returns) == expected
+
+
+    def test_sortino_uses_downside_deviation_across_all_days(self) -> None:
+        engine = BacktestEngine()
+        returns = [0.10, -0.05, 0.03, -0.02]
+        downside_deviation = float(np.sqrt(np.mean(np.square(np.minimum(returns, 0.0)))))
+        expected = float(np.mean(returns) / downside_deviation * np.sqrt(252))
+        curve = [
+            {"date": "2024-01-01", "equity": Decimal("100"), "cash": Decimal("100"), "positions_value": Decimal("0")},
+            {"date": "2024-01-02", "equity": Decimal("110"), "cash": Decimal("110"), "positions_value": Decimal("0")},
+            {"date": "2024-01-03", "equity": Decimal("104.5"), "cash": Decimal("104.5"), "positions_value": Decimal("0")},
+            {"date": "2024-01-04", "equity": Decimal("107.635"), "cash": Decimal("107.635"), "positions_value": Decimal("0")},
+            {"date": "2024-01-05", "equity": Decimal("105.4823"), "cash": Decimal("105.4823"), "positions_value": Decimal("0")},
+        ]
+        metrics = engine._calculate_metrics(curve, [])
+        assert metrics["sortino_ratio"] == round(expected, 4)
+
+    def test_metrics_use_configured_initial_capital_as_baseline(self) -> None:
+        engine = BacktestEngine()
+        curve = [
+            {"date": "2024-01-01", "equity": Decimal("105"), "cash": Decimal("5"), "positions_value": Decimal("100")},
+            {"date": "2024-01-02", "equity": Decimal("95"), "cash": Decimal("5"), "positions_value": Decimal("90")},
+        ]
+        metrics = engine._calculate_metrics(curve, [], initial_capital=Decimal("100"))
+        assert metrics["total_return"] == -0.05
+        assert metrics["max_drawdown"] == round((105 - 95) / 105, 6)
+
+    def test_annualized_return_is_compounded(self) -> None:
+        engine = BacktestEngine()
+        equity_curve = [
+            {"date": "2024-01-01", "equity": Decimal("100"), "cash": Decimal("100"), "positions_value": Decimal("0")},
+            {"date": "2024-01-02", "equity": Decimal("110"), "cash": Decimal("110"), "positions_value": Decimal("0")},
+            {"date": "2024-01-03", "equity": Decimal("121"), "cash": Decimal("121"), "positions_value": Decimal("0")},
+        ]
+        metrics = engine._calculate_metrics(equity_curve, [])
+        expected = (1.21 ** (252 / 2)) - 1
+        assert metrics["annualized_return"] == round(expected, 6)
+        assert metrics["trading_days"] == 3
+ 
+    def test_exit_fills_next_bar_open_and_keeps_unfilled_shares(
+        self, db_session: Session
+    ) -> None:
+        _seed_price_data(db_session, "TEST", "2024-01-01", count=3)
+        db_session.commit()
+
+        prices = db_session.scalars(
+            select(Price)
+            .join(Stock, Price.stock_id == Stock.id)
+            .where(Stock.symbol == "TEST")
+            .order_by(Price.date)
+        ).all()
+        prices[0].open = Decimal("100")
+        prices[0].close = Decimal("100")
+        prices[0].volume = 1000
+        prices[1].open = Decimal("105")
+        prices[1].close = Decimal("105")
+        prices[1].volume = 1000
+        prices[2].open = Decimal("90")
+        prices[2].close = Decimal("90")
+        prices[2].volume = 10
+        db_session.commit()
+
+        engine = BacktestEngine(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0"),
+            slippage_bps=Decimal("0"),
+            data_quality_gate=None,
+            session=db_session,
+        )
+        test_engine = cast(Any, engine)
+        test_engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        test_engine._get_features = lambda symbol, date_str: {}
+        test_engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        test_engine._should_exit = (
+            lambda symbol, date_str, features, rules, position, price_row:
+            date_str == "2024-01-02"
+        )
+        strategy = _seed_strategy(
+            db_session,
+            name="next-open-exit-test",
+            config={"symbols": ["TEST"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
+        )
+
+        result = engine.run(strategy, ["TEST"], "2024-01-01", "2024-01-03")
+        sells = [trade for trade in result["trades"] if trade["action"] == "SELL"]
+
+        assert len(sells) == 1
+        assert sells[0]["timestamp"].startswith("2024-01-03")
+        assert sells[0]["price"] == 90.0
+        assert sells[0]["quantity"] == 3.0
+        assert result["equity_curve"][-1]["positions_value"] == 8730.0
+
 
 class TestBenchmarkService:
-    def test_get_trading_dates(self) -> None:
-        from app.services.backtest import BacktestEngine
+    def test_backtest_refuses_to_run_without_historical_prices(
+        self, db_session: Session
+    ) -> None:
+        engine = BacktestEngine(session=db_session)
+        cast(Any, engine)._get_trading_dates = lambda start_date, end_date, symbols: []
+        strategy = _seed_strategy(db_session, name="empty-history-test")
+        with pytest.raises(ValueError, match="No historical price observations"):
+            engine.run(strategy, ["TEST"], "2024-01-01", "2024-12-31")
 
-        engine = BacktestEngine()
+
+    def test_exit_does_not_use_same_day_close_when_next_open_is_missing(
+        self, db_session: Session
+    ) -> None:
+        _seed_price_data(db_session, "NOOPEN", "2024-01-01", count=3)
+        db_session.commit()
+        rows = db_session.scalars(
+            select(Price)
+            .join(Stock, Price.stock_id == Stock.id)
+            .where(Stock.symbol == "NOOPEN")
+            .order_by(Price.date)
+        ).all()
+        rows[0].open, rows[0].close, rows[0].volume = Decimal("100"), Decimal("100"), 1000
+        rows[1].open, rows[1].close, rows[1].volume = Decimal("105"), Decimal("105"), 1000
+        cast(Any, rows[2]).open = None
+        rows[2].close, rows[2].volume = Decimal("90"), 1000
+        db_session.commit()
+
+        engine = BacktestEngine(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0"),
+            slippage_bps=Decimal("0"),
+            data_quality_gate=None,
+            session=db_session,
+        )
+        test_engine = cast(Any, engine)
+        test_engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        test_engine._get_features = lambda symbol, date_str: {}
+        test_engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        test_engine._should_exit = (
+            lambda symbol, date_str, features, rules, position, price_row:
+            date_str == "2024-01-02"
+        )
+        strategy = _seed_strategy(
+            db_session,
+            name="missing-open-test",
+            config={"symbols": ["NOOPEN"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
+        )
+
+        result = engine.run(strategy, ["NOOPEN"], "2024-01-01", "2024-01-03")
+        assert [trade["action"] for trade in result["trades"]] == ["BUY"]
+        assert result["equity_curve"][-1]["positions_value"] == 9000.0
+
+    def test_get_trading_dates_uses_observed_price_dates(self, db_session: Session) -> None:
+        _seed_price_data(db_session, "TEST", "2024-01-01", count=5)
+        engine = BacktestEngine(session=db_session)
         dates = engine._get_trading_dates("2024-01-01", "2024-01-05", ["TEST"])
-        assert len(dates) == 5
+        assert dates == [
+            date(2024, 1, 1),
+            date(2024, 1, 2),
+            date(2024, 1, 3),
+            date(2024, 1, 4),
+            date(2024, 1, 5),
+        ]
 
     def test_calculate_benchmark_metrics(self) -> None:
         service = BenchmarkService()

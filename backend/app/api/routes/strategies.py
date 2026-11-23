@@ -90,11 +90,13 @@ def run_backtest(
     db: DbSession,
 ) -> dict:
     service = BacktestService(session=db)
-    result = service.run_backtest(
-        strategy_id=request.strategy_id,
-        config=request.config.model_dump(),
-    )
-    return result
+    try:
+        return service.run_backtest(
+            strategy_id=request.strategy_id,
+            config=request.config.model_dump(mode="json"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/backtests/{backtest_id}")
