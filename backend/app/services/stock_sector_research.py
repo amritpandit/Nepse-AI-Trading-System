@@ -723,6 +723,227 @@ def _historical_event_study(
     }
 
 
+def _market_context_at_date(
+    benchmark_rows: list[NEPSEIndex], as_of: date
+) -> dict[str, Any]:
+    history = [row for row in benchmark_rows if row.date <= as_of]
+    if len(history) < 50:
+        return {"regime": "unavailable", "return_20d": None, "as_of": as_of.isoformat()}
+    closes = np.asarray([float(row.close) for row in history[-220:]], dtype=float)
+    sma50 = float(np.mean(closes[-50:]))
+    sma200 = float(np.mean(closes[-200:])) if closes.size >= 200 else None
+    return20 = float(closes[-1] / closes[-21] - 1.0)
+    regime = "sideways"
+    if closes[-1] > sma50 and return20 > 0 and (sma200 is None or sma50 > sma200):
+        regime = "bullish"
+    elif closes[-1] < sma50 and return20 < 0 and (sma200 is None or sma50 < sma200):
+        regime = "bearish"
+    return {
+        "regime": regime,
+        "return_20d": return20,
+        "index_close": float(closes[-1]),
+        "as_of": history[-1].date.isoformat(),
+    }
+
+
+def _historical_score_validation(
+    rows: list[Price],
+    benchmark_rows: list[NEPSEIndex],
+    sector_histories: list[list[Price]],
+) -> dict[str, Any]:
+    """Evaluate fixed score weights on a chronological 30% holdout.
+
+    Every historical score uses only bars available through that signal date.
+    Entries occur at the next recorded session's open. The NEPSE Index is only
+    a benchmark; sector strength is a same-date cross-sectional median.
+    """
+    if len(rows) < 250:
+        return {
+            "status": "insufficient_history",
+            "reason": "At least 250 clean stock sessions are required for a 70/30 holdout",
+            "scoring_model_version": "sector-stock-score-v1",
+        }
+    if not benchmark_rows:
+        return {
+            "status": "benchmark_missing",
+            "reason": "NEPSE Index history is required for market-regime and benchmark comparisons",
+            "scoring_model_version": "sector-stock-score-v1",
+        }
+
+    split_index = max(200, int(len(rows) * 0.70))
+    horizons = (5, 10, 20)
+    buy_results: dict[str, list[float]] = {str(h): [] for h in horizons}
+    benchmark_results: dict[str, list[float]] = {str(h): [] for h in horizons}
+    excess_results: dict[str, list[float]] = {str(h): [] for h in horizons}
+    sell_following: dict[str, list[float]] = {str(h): [] for h in horizons}
+    buy_dates: list[str] = []
+    sell_dates: list[str] = []
+
+    sector_returns: dict[date, list[float]] = {}
+    for member_history in sector_histories:
+        member_rows = _valid_history(member_history)
+        for index in range(20, len(member_rows)):
+            earlier = float(member_rows[index - 20].close)
+            current = float(member_rows[index].close)
+            if earlier > 0:
+                sector_returns.setdefault(member_rows[index].date, []).append(
+                    current / earlier - 1.0
+                )
+    sector_median_by_date = {
+        day: float(statistics.median(values))
+        for day, values in sector_returns.items()
+        if values
+    }
+    benchmark_by_date = {row.date: row for row in benchmark_rows}
+
+    last_buy_index = split_index - max(horizons)
+    last_sell_index = split_index - max(horizons)
+    for index in range(split_index, len(rows) - max(horizons) - 1):
+        if index - last_buy_index >= max(horizons):
+            prefix = rows[: index + 1]
+            indicators = _indicator_snapshot(prefix)
+            smc = _smc_snapshot(prefix)
+            market = _market_context_at_date(benchmark_rows, rows[index].date)
+            sector_return = sector_median_by_date.get(rows[index].date)
+            sector: dict[str, Any] | None = None
+            if sector_return is not None and market.get("return_20d") is not None:
+                sector = {
+                    "relative_strength_vs_nepse_20d": (
+                        sector_return - float(market["return_20d"])
+                    )
+                }
+            score = _score_signal(indicators, smc, market, sector)
+            buy_score = int(score["buy_score"])
+            sell_score = int(score["sell_score"])
+            margin = int(score["score_margin"])
+            buy_gates = (
+                market.get("regime") in ("bullish", "sideways")
+                and sector is not None
+                and float(sector["relative_strength_vs_nepse_20d"]) >= 0
+                and indicators.get("sma_50") is not None
+                and indicators["close"] > indicators["sma_50"]
+            )
+            if buy_score >= 65 and margin >= 25 and buy_gates:
+                entry_open = rows[index + 1].open
+                if entry_open is not None and float(entry_open) > 0:
+                    last_buy_index = index
+                    buy_dates.append(rows[index].date.isoformat())
+                    entry_fill = float(entry_open) * (1.0 + SLIPPAGE_BPS / 10_000.0)
+                    benchmark_entry = benchmark_by_date.get(rows[index + 1].date)
+                    for horizon in horizons:
+                        exit_close = float(rows[index + horizon].close)
+                        exit_fill = exit_close * (1.0 - SLIPPAGE_BPS / 10_000.0)
+                        gross = exit_fill / entry_fill - 1.0
+                        net = (1.0 + gross) * ((1.0 - TRADING_COST_RATE) ** 2) - 1.0
+                        buy_results[str(horizon)].append(net)
+                        benchmark_exit = benchmark_by_date.get(rows[index + horizon].date)
+                        if (
+                            benchmark_entry is not None
+                            and benchmark_entry.open is not None
+                            and benchmark_entry.open > 0
+                            and benchmark_exit is not None
+                        ):
+                            benchmark_return = (
+                                float(benchmark_exit.close) / float(benchmark_entry.open) - 1.0
+                            )
+                            benchmark_results[str(horizon)].append(benchmark_return)
+                            excess_results[str(horizon)].append(net - benchmark_return)
+
+            sell_price_confirmation = bool(
+                indicators.get("breakdown_20d")
+                or (
+                    indicators.get("sma_20") is not None
+                    and indicators["close"] < indicators["sma_20"]
+                    and indicators.get("volume_ratio_20d") is not None
+                    and indicators["volume_ratio_20d"] >= 1.2
+                )
+            )
+            if (
+                index - last_sell_index >= max(horizons)
+                and sell_score >= 65
+                and -margin >= 25
+                and sell_price_confirmation
+            ):
+                entry_open = rows[index + 1].open
+                if entry_open is not None and float(entry_open) > 0:
+                    last_sell_index = index
+                    sell_dates.append(rows[index].date.isoformat())
+                    for horizon in horizons:
+                        exit_close = float(rows[index + horizon].close)
+                        sell_following[str(horizon)].append(
+                            exit_close / float(entry_open) - 1.0
+                        )
+
+    results: dict[str, Any] = {}
+    for horizon in horizons:
+        key = str(horizon)
+        buy_values = buy_results[key]
+        benchmark_values = benchmark_results[key]
+        excess_values = excess_results[key]
+        sell_values = sell_following[key]
+        results[f"forward_{horizon}d"] = {
+            "buy_sample_count": len(buy_values),
+            "buy_win_rate": (
+                sum(value > 0 for value in buy_values) / len(buy_values)
+                if buy_values else None
+            ),
+            "buy_mean_net_return": (
+                float(statistics.mean(buy_values)) if buy_values else None
+            ),
+            "buy_median_net_return": (
+                float(statistics.median(buy_values)) if buy_values else None
+            ),
+            "nepse_benchmark_sample_count": len(benchmark_values),
+            "nepse_mean_return": (
+                float(statistics.mean(benchmark_values)) if benchmark_values else None
+            ),
+            "mean_excess_vs_nepse": (
+                float(statistics.mean(excess_values)) if excess_values else None
+            ),
+            "sell_sample_count": len(sell_values),
+            "negative_return_share_after_sell": (
+                sum(value < 0 for value in sell_values) / len(sell_values)
+                if sell_values else None
+            ),
+            "mean_forward_return_after_sell": (
+                float(statistics.mean(sell_values)) if sell_values else None
+            ),
+        }
+
+    return {
+        "status": "evaluated",
+        "scoring_model_version": "sector-stock-score-v1",
+        "validation_method": "chronological holdout; first 70% warm-up/development, final 30% evaluated",
+        "training_observations_for_warmup": split_index,
+        "test_observations": len(rows) - split_index,
+        "test_start_date": rows[split_index].date.isoformat(),
+        "test_end_date": rows[-1].date.isoformat(),
+        "buy_trigger_count": len(buy_dates),
+        "sell_trigger_count": len(sell_dates),
+        "buy_first_trigger_date": buy_dates[0] if buy_dates else None,
+        "buy_last_trigger_date": buy_dates[-1] if buy_dates else None,
+        "sell_first_trigger_date": sell_dates[0] if sell_dates else None,
+        "sell_last_trigger_date": sell_dates[-1] if sell_dates else None,
+        "assumptions": {
+            "initial_signal": "completed daily close",
+            "entry": "next recorded session open",
+            "buy_exit": "fixed horizon close (5, 10 or 20 sessions from signal date)",
+            "one_way_commission_rate": TRADING_COST_RATE,
+            "slippage_bps_per_side": SLIPPAGE_BPS,
+            "short_selling": False,
+            "corporate_action_adjusted": False,
+            "sector_return": "same-date median member-stock 20-session raw price return",
+            "nepse_index_role": "benchmark only; no index BUY/SELL orders",
+        },
+        "score_thresholds": {"minimum_buy_score": 65, "minimum_sell_score": 65, "minimum_margin": 25},
+        "results": results,
+        "warning": (
+            "Research holdout only, not live profitability proof. It assumes the source's raw "
+            "prices; corporate-action adjustment and survivorship-bias controls remain required."
+        ),
+    }
+
+
 class StockSectorResearchService:
     def __init__(self, session: Session) -> None:
         self.session = session
