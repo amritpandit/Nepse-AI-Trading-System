@@ -250,8 +250,8 @@ class BacktestEngine:
                     pending_signals.remove(signal)
 
                 elif signal.signal_type == "EXIT":
-                    position = positions.get(signal.symbol)
-                    if position is None:
+                    exit_position = positions.get(signal.symbol)
+                    if exit_position is None:
                         pending_signals.remove(signal)
                         continue
                     # Keep an exit order pending until a usable bar and some volume
@@ -265,8 +265,8 @@ class BacktestEngine:
                         continue
 
                     volume = int(price_row.get("volume") or 0)
-                    fill_rate = self._calculate_fill_rate(volume, position.quantity)
-                    actual_qty = min(position.quantity, int(position.quantity * fill_rate))
+                    fill_rate = self._calculate_fill_rate(volume, exit_position.quantity)
+                    actual_qty = min(exit_position.quantity, int(exit_position.quantity * fill_rate))
                     if actual_qty <= 0:
                         continue
 
@@ -274,7 +274,7 @@ class BacktestEngine:
                     proceeds = Decimal(str(actual_qty)) * actual_price
                     commission = proceeds * self.commission_rate
                     cash += proceeds - commission
-                    position.quantity -= actual_qty
+                    exit_position.quantity -= actual_qty
                     trades.append(
                         {
                             "symbol": signal.symbol,
@@ -287,7 +287,7 @@ class BacktestEngine:
                         }
                     )
 
-                    if position.quantity <= 0:
+                    if exit_position.quantity <= 0:
                         del positions[signal.symbol]
                         pending_signals.remove(signal)
                     else:
