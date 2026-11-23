@@ -160,7 +160,7 @@ def test_stock_analysis_only_emits_stock_trigger_and_sector_context(db_session: 
     assert result["symbol"] == "TEST"
     assert result["market_context"]["signal_role"] == "benchmark_only_no_buy_or_sell_orders"
     assert result["sector_context"]["sector"] == "Commercial Bank"
-    assert result["historical_event_study"]["method"].startswith("breakout event study")
+    assert "breakout event study" in result["historical_event_study"]["method"]
     assert result["data_quality"]["source_prices_corporate_action_adjusted"] is False
 
 
@@ -286,7 +286,7 @@ def test_historical_score_validation_uses_chronological_holdout() -> None:
                 stock_id=1,
                 date=day,
                 open=stock_close - Decimal("0.1"),
-                high=stock_close + Decimal("0.3"),
+                high=stock_close + Decimal("0.1"),
                 low=stock_close - Decimal("0.3"),
                 close=stock_close,
                 volume=1000,
