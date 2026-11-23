@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 import polars as pl
@@ -261,18 +261,19 @@ class TestBacktestEngine:
             commission_rate=Decimal("0"),
             slippage_bps=Decimal("0"),
             data_quality_gate=None,
+            session=db_session,
         )
-        engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
-        engine._get_features = lambda symbol, date_str: {}
-        engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
-        engine._should_exit = (
+        test_engine = cast(Any, engine)
+        test_engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        test_engine._get_features = lambda symbol, date_str: {}
+        test_engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        test_engine._should_exit = (
             lambda symbol, date_str, features, rules, position, price_row:
             date_str == "2024-01-02"
         )
-        strategy = SimpleNamespace(
-            id=1,
+        strategy = _seed_strategy(
+            db_session,
             name="next-open-exit-test",
-            version="1",
             config={"symbols": ["TEST"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
         )
 
@@ -287,15 +288,12 @@ class TestBacktestEngine:
 
 
 class TestBenchmarkService:
-    def test_backtest_refuses_to_run_without_historical_prices(self) -> None:
-        engine = BacktestEngine()
-        engine._get_trading_dates = lambda start_date, end_date, symbols: []
-        strategy = SimpleNamespace(
-            id=1,
-            name="empty-history-test",
-            version="1",
-            config={"symbols": ["TEST"]},
-        )
+    def test_backtest_refuses_to_run_without_historical_prices(
+        self, db_session: Session
+    ) -> None:
+        engine = BacktestEngine(session=db_session)
+        cast(Any, engine)._get_trading_dates = lambda start_date, end_date, symbols: []
+        strategy = _seed_strategy(db_session, name="empty-history-test")
         with pytest.raises(ValueError, match="No historical price observations"):
             engine.run(strategy, ["TEST"], "2024-01-01", "2024-12-31")
 
@@ -313,7 +311,8 @@ class TestBenchmarkService:
         ).all()
         rows[0].open, rows[0].close, rows[0].volume = Decimal("100"), Decimal("100"), 1000
         rows[1].open, rows[1].close, rows[1].volume = Decimal("105"), Decimal("105"), 1000
-        rows[2].open, rows[2].close, rows[2].volume = None, Decimal("90"), 1000
+        setattr(rows[2], "open", None)
+        rows[2].close, rows[2].volume = Decimal("90"), 1000
         db_session.commit()
 
         engine = BacktestEngine(
@@ -323,17 +322,17 @@ class TestBenchmarkService:
             data_quality_gate=None,
             session=db_session,
         )
-        engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
-        engine._get_features = lambda symbol, date_str: {}
-        engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
-        engine._should_exit = (
+        test_engine = cast(Any, engine)
+        test_engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        test_engine._get_features = lambda symbol, date_str: {}
+        test_engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        test_engine._should_exit = (
             lambda symbol, date_str, features, rules, position, price_row:
             date_str == "2024-01-02"
         )
-        strategy = SimpleNamespace(
-            id=2,
+        strategy = _seed_strategy(
+            db_session,
             name="missing-open-test",
-            version="1",
             config={"symbols": ["NOOPEN"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
         )
 
