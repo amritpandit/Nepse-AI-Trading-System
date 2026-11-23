@@ -518,9 +518,14 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
     sma20 = _sma(close, 20)
     sma50 = _sma(close, 50)
     sma200 = _sma(close, 200)
+    ema9 = _ema(close, 9)
+    ema21 = _ema(close, 21)
     macd = _ema(close, 12) - _ema(close, 26)
     macd_signal = _ema(macd, 9)
     rsi = _rsi(close, 14)
+    rolling_std20 = np.full(close.shape, np.nan, dtype=float)
+    for index in range(19, close.size):
+        rolling_std20[index] = float(np.std(close[index - 19 : index + 1], ddof=0))
     result: list[dict[str, Any]] = []
     for index, row in enumerate(sample):
         result.append(
@@ -534,6 +539,10 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
                 "sma_20": float(sma20[index]) if np.isfinite(sma20[index]) else None,
                 "sma_50": float(sma50[index]) if np.isfinite(sma50[index]) else None,
                 "sma_200": float(sma200[index]) if np.isfinite(sma200[index]) else None,
+                "ema_9": float(ema9[index]) if np.isfinite(ema9[index]) else None,
+                "ema_21": float(ema21[index]) if np.isfinite(ema21[index]) else None,
+                "bollinger_upper": float(sma20[index] + 2 * rolling_std20[index]) if np.isfinite(sma20[index]) and np.isfinite(rolling_std20[index]) else None,
+                "bollinger_lower": float(sma20[index] - 2 * rolling_std20[index]) if np.isfinite(sma20[index]) and np.isfinite(rolling_std20[index]) else None,
                 "macd": float(macd[index]) if np.isfinite(macd[index]) else None,
                 "macd_signal": float(macd_signal[index]) if np.isfinite(macd_signal[index]) else None,
                 "macd_histogram": (
