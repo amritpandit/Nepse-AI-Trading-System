@@ -125,6 +125,12 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     )
     previous_high20 = float(np.max(high[-21:-1])) if close.size >= 21 else None
     previous_low20 = float(np.min(low[-21:-1])) if close.size >= 21 else None
+    current_hist = float(macd[-1] - macd_signal[-1]) if np.isfinite(macd[-1]) and np.isfinite(macd_signal[-1]) else None
+    previous_hist = float(macd[-2] - macd_signal[-2]) if close.size >= 2 and np.isfinite(macd[-2]) and np.isfinite(macd_signal[-2]) else None
+    average_turnover20 = _sma(close * volume, 20)
+    daily_return = float(close[-1] / close[-2] - 1.0) if close.size >= 2 and close[-2] > 0 else None
+    bollinger_mid = float(sma20[-1]) if np.isfinite(sma20[-1]) else None
+    bollinger_std = float(np.std(close[-20:], ddof=0)) if close.size >= 20 else None
     return {
         "close": float(close[-1]),
         "sma_20": float(sma20[-1]) if np.isfinite(sma20[-1]) else None,
@@ -135,7 +141,16 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         "rsi_14": float(rsi[-1]) if np.isfinite(rsi[-1]) else None,
         "macd": float(macd[-1]) if np.isfinite(macd[-1]) else None,
         "macd_signal": float(macd_signal[-1]) if np.isfinite(macd_signal[-1]) else None,
+        "macd_histogram": current_hist,
+        "previous_macd_histogram": previous_hist,
         "atr_14": float(atr14[-1]) if np.isfinite(atr14[-1]) else None,
+        "bollinger_middle": bollinger_mid,
+        "bollinger_upper": bollinger_mid + 2 * bollinger_std if bollinger_mid is not None and bollinger_std is not None else None,
+        "bollinger_lower": bollinger_mid - 2 * bollinger_std if bollinger_mid is not None and bollinger_std is not None else None,
+        "average_traded_value_20d": float(average_turnover20[-1]) if average_turnover20.size and np.isfinite(average_turnover20[-1]) else None,
+        "daily_return": daily_return,
+        "breakout_20d": previous_high20 is not None and close[-1] > previous_high20,
+        "breakdown_20d": previous_low20 is not None and close[-1] < previous_low20,
         "volume_ratio_20d": volume_ratio,
         "previous_high_20d": previous_high20,
         "previous_low_20d": previous_low20,
