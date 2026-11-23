@@ -358,7 +358,7 @@ class TestBacktestDeterminism:
             slippage_bps=5.0,
         )
 
-        engine_a = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine_a = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         engine_b = BacktestEngine(
             initial_capital=Decimal(str(config.initial_capital)),
             commission_rate=Decimal(str(config.commission_rate)),
@@ -395,8 +395,8 @@ class TestBacktestDeterminism:
             slippage_bps=5.0,
         )
 
-        engine1 = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
-        engine2 = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine1 = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
+        engine2 = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
 
         r1 = engine1.run(strategy_with_prices, ["TEST"], config.start_date, config.end_date)
         r2 = engine2.run(strategy_with_prices, ["TEST"], config.start_date, config.end_date)
@@ -630,7 +630,7 @@ class TestDataQualityGateEnforcement:
         )
         db_session.commit()
 
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         result = engine.run(
             strategy=strategy_with_prices,
             symbols=["MIXED"],
@@ -645,7 +645,7 @@ class TestDataQualityGateEnforcement:
     def test_data_quality_gate_error_caught_in_backtest(
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
 
         try:
             engine.run(
@@ -665,7 +665,7 @@ class TestPhase6EndToEnd:
     def test_export_schema_json_serializable(
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
 
         result = engine.run(
             strategy=strategy_with_prices,
@@ -711,7 +711,7 @@ class TestBacktestDeterminismStrict:
     def test_run_twice_produces_exact_equity_curve(
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         r1 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
@@ -736,7 +736,7 @@ class TestBacktestDeterminismStrict:
     def test_run_twice_identical_hash_output(
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         r1 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
@@ -803,7 +803,7 @@ class TestExportEdgeCases:
             name="edge_strategy",
             config={"symbols": ["EDGE"], "entry_rules": [], "exit_rules": [], "risk_rules": []},
         )
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         result = engine.run(
             strategy=strategy,
             symbols=["EDGE"],
@@ -826,7 +826,7 @@ class TestExportEdgeCases:
             name="noeq_strategy",
             config={"symbols": ["NOEQ"], "entry_rules": [], "exit_rules": [], "risk_rules": []},
         )
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         result = engine.run(
             strategy=strategy,
             symbols=["NOEQ"],
@@ -842,7 +842,7 @@ class TestExportEdgeCases:
             name="inf_strategy",
             config={"symbols": ["INF"], "entry_rules": [], "exit_rules": [], "risk_rules": []},
         )
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         result = engine.run(
             strategy=strategy,
             symbols=["INF"],
@@ -882,7 +882,7 @@ class TestPhase6CycleTimeDetailed:
     def test_backtest_completes_within_threshold(self, db_session: Session) -> None:
         _seed_prices(db_session, "PERF", "2024-01-01", count=60)
         strategy = _seed_strategy(db_session, name="perf_strategy")
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         start = time.perf_counter()
         result = engine.run(
             strategy=strategy,
@@ -897,7 +897,7 @@ class TestPhase6CycleTimeDetailed:
     def test_export_bundle_generation_within_threshold(self, db_session: Session) -> None:
         _seed_prices(db_session, "BUNDLE", "2024-01-01", count=30)
         strategy = _seed_strategy(db_session, name="bundle_strategy")
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         metrics = engine.run(
             strategy=strategy,
             symbols=["BUNDLE"],
@@ -927,7 +927,7 @@ class TestPhase6CycleTimeDetailed:
     def test_full_workflow_latency_under_threshold(self, db_session: Session) -> None:
         _seed_prices(db_session, "LAT", "2024-01-01", count=40)
         strategy = _seed_strategy(db_session, name="latency_strategy")
-        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session))
+        engine = BacktestEngine(data_quality_gate=DataQualityGate(session=db_session), session=db_session)
         start = time.perf_counter()
         engine.run(
             strategy=strategy,
