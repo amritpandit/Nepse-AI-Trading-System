@@ -173,8 +173,10 @@ class NepalMarketDataImporter:
                 parsed: dict[date, dict[str, Any]] = {}
                 for row in rows:
                     row_date = _parse_date(row.get("published_date"))
-                    if row_date is None or (start and row_date < start) or (end and row_date > end):
+                    if row_date is None:
                         rejected += 1
+                        continue
+                    if (start and row_date < start) or (end and row_date > end):
                         continue
                     fetched_rows += 1
                     o = _decimal(row.get("open"))
