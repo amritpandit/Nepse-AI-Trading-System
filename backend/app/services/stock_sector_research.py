@@ -512,8 +512,6 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
     """Return JSON-safe daily chart data with indicator overlays."""
     sample = rows[-220:]
     close = np.asarray([float(row.close) for row in sample], dtype=float)
-    highs = np.asarray([float(row.high) for row in sample], dtype=float)
-    lows = np.asarray([float(row.low) for row in sample], dtype=float)
     volume = np.asarray([float(row.volume or 0) for row in sample], dtype=float)
     sma20 = _sma(close, 20)
     sma50 = _sma(close, 50)
