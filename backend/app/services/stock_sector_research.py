@@ -335,63 +335,80 @@ def _score_signal(
     sell = 0
     components: dict[str, dict[str, Any]] = {}
 
+    def record(
+        name: str,
+        weight: int,
+        buy_points: int = 0,
+        sell_points: int = 0,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        nonlocal buy, sell
+        buy += buy_points
+        sell += sell_points
+        components[name] = {
+            "weight": weight,
+            "buy_points": buy_points,
+            "sell_points": sell_points,
+            **(evidence or {}),
+        }
+
     regime = market.get("regime")
     if regime == "bullish":
-        buy += 10
-        components["market_regime"] = {"weight": 10, "side": "buy", "reason": "NEPSE trend bullish"}
+        record("market_regime", 10, buy_points=10, evidence={"reason": "NEPSE trend bullish"})
     elif regime == "bearish":
-        sell += 10
-        components["market_regime"] = {"weight": 10, "side": "sell", "reason": "NEPSE trend bearish"}
+        record("market_regime", 10, sell_points=10, evidence={"reason": "NEPSE trend bearish"})
     else:
-        components["market_regime"] = {"weight": 10, "side": "neutral", "reason": "No confirmed market trend"}
+        record("market_regime", 10, evidence={"reason": "No confirmed market trend"})
 
     relative_strength = sector.get("relative_strength_vs_nepse_20d") if sector else None
     if relative_strength is not None and relative_strength > 0:
-        buy += 10
-        components["sector_strength"] = {"weight": 10, "side": "buy", "value": relative_strength}
+        record("sector_strength", 10, buy_points=10, evidence={"relative_strength_20d": relative_strength})
     elif relative_strength is not None and relative_strength < 0:
-        sell += 10
-        components["sector_strength"] = {"weight": 10, "side": "sell", "value": relative_strength}
+        record("sector_strength", 10, sell_points=10, evidence={"relative_strength_20d": relative_strength})
     else:
-        components["sector_strength"] = {
-            "weight": 10,
-            "side": "neutral",
-            "reason": "Sector relative strength unavailable or flat",
-        }
+        record("sector_strength", 10, evidence={"reason": "Sector relative strength unavailable or flat"})
 
     close = indicators["close"]
-    sma20, sma50, sma200 = (
-        indicators.get("sma_20"),
-        indicators.get("sma_50"),
-        indicators.get("sma_200"),
-    )
+    sma20 = indicators.get("sma_20")
+    sma50 = indicators.get("sma_50")
+    sma200 = indicators.get("sma_200")
     if sma20 is not None and sma50 is not None and close > sma20 > sma50:
-        buy += 20 if sma200 is None or sma50 > sma200 else 15
-        components["trend_structure"] = {"weight": 20, "side": "buy", "reason": "Close above SMA20 and SMA20 above SMA50"}
+        points = 20 if sma200 is None or sma50 > sma200 else 15
+        record(
+            "trend_structure",
+            20,
+            buy_points=points,
+            evidence={"reason": "Close above SMA20 and SMA20 above SMA50"},
+        )
     elif sma20 is not None and sma50 is not None and close < sma20 < sma50:
-        sell += 20 if sma200 is None or sma50 < sma200 else 15
-        components["trend_structure"] = {"weight": 20, "side": "sell", "reason": "Close below SMA20 and SMA20 below SMA50"}
+        points = 20 if sma200 is None or sma50 < sma200 else 15
+        record(
+            "trend_structure",
+            20,
+            sell_points=points,
+            evidence={"reason": "Close below SMA20 and SMA20 below SMA50"},
+        )
     elif sma20 is not None and close > sma20:
-        buy += 8
-        components["trend_structure"] = {"weight": 20, "side": "buy", "reason": "Close above SMA20 only"}
+        record("trend_structure", 20, buy_points=8, evidence={"reason": "Close above SMA20 only"})
     elif sma20 is not None and close < sma20:
-        sell += 8
-        components["trend_structure"] = {"weight": 20, "side": "sell", "reason": "Close below SMA20 only"}
+        record("trend_structure", 20, sell_points=8, evidence={"reason": "Close below SMA20 only"})
     else:
-        components["trend_structure"] = {"weight": 20, "side": "neutral"}
+        record("trend_structure", 20, evidence={"reason": "No usable moving-average trend"})
 
     rsi = indicators.get("rsi_14")
     if rsi is not None and 55 <= rsi <= 70:
-        buy += 10
-        components["rsi_momentum"] = {"weight": 10, "side": "buy", "value": rsi}
+        record("rsi_momentum", 10, buy_points=10, evidence={"rsi_14": rsi})
     elif rsi is not None and rsi < 40:
-        sell += 10
-        components["rsi_momentum"] = {"weight": 10, "side": "sell", "value": rsi}
+        record("rsi_momentum", 10, sell_points=10, evidence={"rsi_14": rsi})
     elif rsi is not None and rsi > 75:
-        sell += 5
-        components["rsi_momentum"] = {"weight": 10, "side": "sell", "value": rsi, "reason": "Overbought risk"}
+        record(
+            "rsi_momentum",
+            10,
+            sell_points=5,
+            evidence={"rsi_14": rsi, "reason": "Overbought risk"},
+        )
     else:
-        components["rsi_momentum"] = {"weight": 10, "side": "neutral", "value": rsi}
+        record("rsi_momentum", 10, evidence={"rsi_14": rsi})
 
     macd = indicators.get("macd")
     macd_signal = indicators.get("macd_signal")
@@ -400,52 +417,77 @@ def _score_signal(
     if macd is not None and macd_signal is not None and macd > macd_signal and (
         current_hist is None or previous_hist is None or current_hist >= previous_hist
     ):
-        buy += 10
-        components["macd"] = {"weight": 10, "side": "buy", "histogram": current_hist}
+        record("macd", 10, buy_points=10, evidence={"macd_histogram": current_hist})
     elif macd is not None and macd_signal is not None and macd < macd_signal and (
         current_hist is None or previous_hist is None or current_hist <= previous_hist
     ):
-        sell += 10
-        components["macd"] = {"weight": 10, "side": "sell", "histogram": current_hist}
+        record("macd", 10, sell_points=10, evidence={"macd_histogram": current_hist})
     else:
-        components["macd"] = {"weight": 10, "side": "neutral", "histogram": current_hist}
+        record("macd", 10, evidence={"macd_histogram": current_hist})
 
     volume_ratio = indicators.get("volume_ratio_20d")
     daily_change = indicators.get("daily_return")
     if volume_ratio is not None and volume_ratio >= 1.5 and daily_change is not None and daily_change > 0:
-        buy += 10
-        components["volume_confirmation"] = {"weight": 10, "side": "buy", "ratio": volume_ratio}
+        record(
+            "volume_confirmation",
+            10,
+            buy_points=10,
+            evidence={"volume_ratio_20d": volume_ratio},
+        )
     elif volume_ratio is not None and volume_ratio >= 1.2 and daily_change is not None and daily_change < 0:
-        sell += 10
-        components["volume_confirmation"] = {"weight": 10, "side": "sell", "ratio": volume_ratio}
+        record(
+            "volume_confirmation",
+            10,
+            sell_points=10,
+            evidence={"volume_ratio_20d": volume_ratio},
+        )
     else:
-        components["volume_confirmation"] = {"weight": 10, "side": "neutral", "ratio": volume_ratio}
+        record(
+            "volume_confirmation",
+            10,
+            evidence={"volume_ratio_20d": volume_ratio},
+        )
 
     if indicators.get("breakout_20d"):
-        buy += 15
-        components["price_action"] = {"weight": 15, "side": "buy", "reason": "Close above previous 20-session high"}
+        record(
+            "price_action",
+            15,
+            buy_points=15,
+            evidence={"reason": "Close above previous 20-session high"},
+        )
     elif indicators.get("breakdown_20d"):
-        sell += 15
-        components["price_action"] = {"weight": 15, "side": "sell", "reason": "Close below previous 20-session low"}
+        record(
+            "price_action",
+            15,
+            sell_points=15,
+            evidence={"reason": "Close below previous 20-session low"},
+        )
     elif indicators.get("bullish_engulfing") or indicators.get("hammer"):
-        buy += 5
-        components["price_action"] = {"weight": 15, "side": "buy", "reason": "Bullish reversal candle pattern"}
+        record(
+            "price_action",
+            15,
+            buy_points=5,
+            evidence={"reason": "Bullish reversal candle pattern"},
+        )
     elif indicators.get("bearish_engulfing") or indicators.get("shooting_star"):
-        sell += 5
-        components["price_action"] = {"weight": 15, "side": "sell", "reason": "Bearish reversal candle pattern"}
+        record(
+            "price_action",
+            15,
+            sell_points=5,
+            evidence={"reason": "Bearish reversal candle pattern"},
+        )
     else:
-        components["price_action"] = {"weight": 15, "side": "neutral"}
+        record("price_action", 15, evidence={"reason": "No defined breakout/breakdown candle"})
 
     smc_buy = int(smc.get("bullish_points", 0))
     smc_sell = int(smc.get("bearish_points", 0))
-    buy += smc_buy
-    sell += smc_sell
-    components["smc_price_action"] = {
-        "weight": 15,
-        "buy_points": smc_buy,
-        "sell_points": smc_sell,
-        "methodology": "Rule-based OHLC proxies; not observed institutional orders",
-    }
+    record(
+        "smc_price_action",
+        15,
+        buy_points=smc_buy,
+        sell_points=smc_sell,
+        evidence={"methodology": "Rule-based OHLC proxies; not observed institutional orders"},
+    )
 
     return {
         "buy_score": min(100, buy),
