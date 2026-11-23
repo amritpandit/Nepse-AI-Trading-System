@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import httpx
 import sqlalchemy as sa
@@ -236,9 +237,25 @@ def test_smc_rules_do_not_emit_structure_without_minimum_history() -> None:
 
 
 def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -> None:
-    stock_id = _seed_price_data(db_session, "CHART", "2024-01-01", count=230)
+    stock = Stock(symbol="CHART", instrument_type="ordinary", is_active=True)
+    db_session.add(stock)
+    db_session.flush()
+    for index in range(230):
+        close = Decimal(str(100.0 + index * 0.3))
+        db_session.add(
+            Price(
+                stock_id=stock.id,
+                date=date(2024, 1, 1) + timedelta(days=index),
+                open=close - Decimal("0.1"),
+                high=close + Decimal("0.2"),
+                low=close - Decimal("0.2"),
+                close=close,
+                volume=1000 + index * 5,
+            )
+        )
+    db_session.flush()
     rows = db_session.scalars(
-        select(Price).where(Price.stock_id == stock_id).order_by(Price.date)
+        sa.select(Price).where(Price.stock_id == stock.id).order_by(Price.date)
     ).all()
     indicators = _indicator_snapshot(rows)
     chart = _chart_series(rows, _smc_snapshot(rows))
@@ -257,8 +274,8 @@ def test_historical_score_validation_uses_chronological_holdout() -> None:
     start = date(2024, 1, 1)
     for index in range(300):
         day = start + timedelta(days=index)
-        stock_close = Decimal(str(100.0 + index * 0.5))
-        sector_close = Decimal(str(80.0 + index * 0.7))
+        stock_close = Decimal(str(100.0 + index * 0.2 + index * index * 0.001))
+        sector_close = Decimal(str(80.0 + index * 0.25 + index * index * 0.0015))
         index_close = Decimal(str(2000.0 + index * 0.2))
         stock_rows.append(
             Price(
