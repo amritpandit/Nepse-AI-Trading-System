@@ -547,39 +547,41 @@ def _score_signal(
     if indicators.get("breakout_20d"):
         record(
             "price_action",
-            15,
-            buy_points=15,
+            20,
+            buy_points=20,
             evidence={"reason": "Close above previous 20-session high"},
         )
     elif indicators.get("breakdown_20d"):
         record(
             "price_action",
-            15,
-            sell_points=15,
+            20,
+            sell_points=20,
             evidence={"reason": "Close below previous 20-session low"},
         )
     elif indicators.get("bullish_engulfing") or indicators.get("hammer"):
         record(
             "price_action",
-            15,
-            buy_points=5,
+            20,
+            buy_points=7,
             evidence={"reason": "Bullish reversal candle pattern"},
         )
     elif indicators.get("bearish_engulfing") or indicators.get("shooting_star"):
         record(
             "price_action",
-            15,
-            sell_points=5,
+            20,
+            sell_points=7,
             evidence={"reason": "Bearish reversal candle pattern"},
         )
     else:
-        record("price_action", 15, evidence={"reason": "No defined breakout/breakdown candle"})
+        record("price_action", 20, evidence={"reason": "No defined breakout/breakdown candle"})
 
-    smc_buy = int(smc.get("bullish_points", 0))
-    smc_sell = int(smc.get("bearish_points", 0))
+    # SMC is assigned a deliberately smaller weight because these are
+    # discretionary concepts approximated from daily OHLC, not order-flow data.
+    smc_buy = min(10, round(int(smc.get("bullish_points", 0)) * 10 / 15))
+    smc_sell = min(10, round(int(smc.get("bearish_points", 0)) * 10 / 15))
     record(
         "smc_price_action",
-        15,
+        10,
         buy_points=smc_buy,
         sell_points=smc_sell,
         evidence={"methodology": "Rule-based OHLC proxies; not observed institutional orders"},
@@ -598,8 +600,8 @@ def _score_signal(
             "rsi_momentum": 10,
             "macd": 10,
             "volume_confirmation": 10,
-            "price_action_breakout_breakdown": 15,
-            "smc_rule_based_proxies": 15,
+            "price_action_breakout_breakdown": 20,
+            "smc_rule_based_proxies": 10,
         },
     }
 
