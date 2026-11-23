@@ -173,6 +173,10 @@ def page_research() -> None:
                         ("sma_20", "SMA 20"),
                         ("sma_50", "SMA 50"),
                         ("sma_200", "SMA 200"),
+                        ("ema_9", "EMA 9"),
+                        ("ema_21", "EMA 21"),
+                        ("bollinger_upper", "Bollinger upper"),
+                        ("bollinger_lower", "Bollinger lower"),
                     ):
                         fig.add_trace(
                             go.Scatter(
@@ -268,7 +272,7 @@ def page_research() -> None:
                     fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
                     st.plotly_chart(fig, use_container_width=True)
                     st.caption(
-                        "Candlesticks with SMA20/50/200 and volume; MACD/histogram; RSI(14). "
+                        "Candlesticks with SMA/EMA and Bollinger overlays; volume; MACD/histogram; RSI(14). "
                         "Dashed/blocked overlays show rule-based SMC swing and order-block proxies."
                     )
                 st.json(
