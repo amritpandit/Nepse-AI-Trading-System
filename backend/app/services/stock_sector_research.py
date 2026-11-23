@@ -510,10 +510,10 @@ def _market_regime(session: Session) -> dict[str, Any]:
         sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(220)
     ).all()
     rows = list(reversed(rows))
-    if len(rows) < 20:
+    if len(rows) < 50:
         return {
             "regime": "unavailable",
-            "reason": "NEPSE benchmark history is not yet imported or has fewer than 20 sessions",
+            "reason": "At least 50 completed NEPSE Index sessions are required for a market-regime filter",
             "signal_role": "market_context_only",
         }
     closes = np.asarray([float(row.close) for row in rows], dtype=float)
@@ -949,8 +949,13 @@ class StockSectorResearchService:
             )
             .order_by(Stock.symbol)
         ).all()
-        sectors = self._sector_summary(stocks)
+        market = _market_regime(self.session)
+        sectors = self._sector_summary(stocks, market_context=market)
         histories = self._load_histories(stocks, 800)
+        benchmark_rows = self.session.scalars(
+            sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(800)
+        ).all()
+        benchmark_rows = list(reversed(benchmark_rows))
         results: list[dict[str, Any]] = []
         for stock in stocks:
             try:
@@ -958,6 +963,9 @@ class StockSectorResearchService:
                     stock.symbol,
                     sector_summaries=sectors,
                     history=histories.get(stock.id, []),
+                    stock_obj=stock,
+                    market_context=market,
+                    benchmark_rows=benchmark_rows,
                 )
                 analysis["sector_context"] = sectors.get(str(stock.sector)) if stock.sector else None
                 results.append(analysis)
@@ -967,7 +975,7 @@ class StockSectorResearchService:
         results.sort(key=lambda item: (priority.get(item["signal"], 9), -item["confidence_score"]))
         return {
             "as_of": max((item["as_of"] for item in results), default=None),
-            "market_context": _market_regime(self.session),
+            "market_context": market,
             "stocks_analyzed": len(results),
             "signals": results[:limit],
             "data_disclaimer": RESEARCH_SOURCE_WARNING,
@@ -975,7 +983,7 @@ class StockSectorResearchService:
 
     def sector_ranking(self) -> dict[str, Any]:
         market = _market_regime(self.session)
-        sectors = list(self._sector_summary().values())
+        sectors = list(self._sector_summary(market_context=market).values())
         sectors.sort(
             key=lambda item: (
                 item["relative_strength_vs_nepse_20d"] is not None,
