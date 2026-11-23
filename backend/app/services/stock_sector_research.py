@@ -117,10 +117,65 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         )
     atr14 = _sma(true_range, 14)
 
+    # Directional movement / ADX: trend-strength evidence, not direction by itself.
+    plus_dm = np.zeros(close.shape, dtype=float)
+    minus_dm = np.zeros(close.shape, dtype=float)
+    if close.size > 1:
+        up_move = high[1:] - high[:-1]
+        down_move = low[:-1] - low[1:]
+        plus_dm[1:] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm[1:] = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    plus_dm14 = _sma(plus_dm, 14)
+    minus_dm14 = _sma(minus_dm, 14)
+    plus_di = np.divide(
+        plus_dm14 * 100.0, atr14,
+        out=np.zeros(close.shape, dtype=float),
+        where=np.isfinite(atr14) & (atr14 > 0),
+    )
+    minus_di = np.divide(
+        minus_dm14 * 100.0, atr14,
+        out=np.zeros(close.shape, dtype=float),
+        where=np.isfinite(atr14) & (atr14 > 0),
+    )
+    di_sum = plus_di + minus_di
+    dx = np.divide(
+        np.abs(plus_di - minus_di) * 100.0,
+        di_sum,
+        out=np.zeros(close.shape, dtype=float),
+        where=di_sum > 0,
+    )
+    adx14 = _sma(dx, 14)
+
+    # Stochastic oscillator (%K/%D) identifies the close within the recent range.
+    stoch_k = np.full(close.shape, np.nan, dtype=float)
+    stoch_d = np.full(close.shape, np.nan, dtype=float)
+    for index in range(13, close.size):
+        highest = float(np.max(high[index - 13 : index + 1]))
+        lowest = float(np.min(low[index - 13 : index + 1]))
+        stoch_k[index] = (
+            50.0 if highest == lowest
+            else 100.0 * (close[index] - lowest) / (highest - lowest)
+        )
+        if index >= 15:
+            stoch_d[index] = float(np.mean(stoch_k[index - 2 : index + 1]))
+
+    # On-balance volume tracks whether volume accompanies up- or down-closes.
+    obv = np.zeros(close.shape, dtype=float)
+    for index in range(1, close.size):
+        if close[index] > close[index - 1]:
+            obv[index] = obv[index - 1] + volume[index]
+        elif close[index] < close[index - 1]:
+            obv[index] = obv[index - 1] - volume[index]
+        else:
+            obv[index] = obv[index - 1]
+    obv_sma20 = _sma(obv, 20)
+    obv_rising = bool(close.size >= 20 and obv[-1] > obv[-20])
+
     avg_volume20 = _sma(volume, 20)
+    prior_avg_volume20 = float(np.mean(volume[-21:-1])) if volume.size >= 21 else None
     volume_ratio = (
-        float(volume[-1] / avg_volume20[-1])
-        if avg_volume20.size and avg_volume20[-1] > 0
+        float(volume[-1] / prior_avg_volume20)
+        if prior_avg_volume20 is not None and prior_avg_volume20 > 0
         else None
     )
     previous_high20 = float(np.max(high[-21:-1])) if close.size >= 21 else None
@@ -164,6 +219,14 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         "sma_50": float(sma50[-1]) if np.isfinite(sma50[-1]) else None,
         "sma_200": float(sma200[-1]) if np.isfinite(sma200[-1]) else None,
         "rsi_14": float(rsi[-1]) if np.isfinite(rsi[-1]) else None,
+        "stoch_k_14": float(stoch_k[-1]) if np.isfinite(stoch_k[-1]) else None,
+        "stoch_d_3": float(stoch_d[-1]) if np.isfinite(stoch_d[-1]) else None,
+        "adx_14": float(adx14[-1]) if np.isfinite(adx14[-1]) else None,
+        "plus_di_14": float(plus_di[-1]) if close.size else None,
+        "minus_di_14": float(minus_di[-1]) if close.size else None,
+        "obv": float(obv[-1]) if close.size else 0.0,
+        "obv_sma_20": float(obv_sma20[-1]) if np.isfinite(obv_sma20[-1]) else None,
+        "obv_rising_20d": obv_rising,
         "macd": float(macd[-1]) if np.isfinite(macd[-1]) else None,
         "macd_signal": float(macd_signal[-1]) if np.isfinite(macd_signal[-1]) else None,
         "macd_histogram": current_hist,
@@ -183,6 +246,8 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         "volume_ratio_20d": volume_ratio,
         "previous_high_20d": previous_high20,
         "previous_low_20d": previous_low20,
+        "high_60d": float(np.max(high[-60:])) if close.size >= 60 else None,
+        "low_60d": float(np.min(low[-60:])) if close.size >= 60 else None,
         "return_20d": float(close[-1] / close[-21] - 1.0) if close.size >= 21 else None,
         "return_60d": float(close[-1] / close[-61] - 1.0) if close.size >= 61 else None,
         "bars": int(close.size),
@@ -309,6 +374,12 @@ def _smc_snapshot(rows: list[Price]) -> dict[str, Any]:
         "bearish_liquidity_sweep": bearish_sweep,
         "bullish_fair_value_gap_proxy": bullish_fvg,
         "bearish_fair_value_gap_proxy": bearish_fvg,
+        "bullish_fvg_zone": (
+            {"low": float(highs[-3]), "high": float(lows[-1])} if bullish_fvg else None
+        ),
+        "bearish_fvg_zone": (
+            {"low": float(highs[-1]), "high": float(lows[-3])} if bearish_fvg else None
+        ),
         "bullish_order_block_proxy": bullish_order_block,
         "bearish_order_block_proxy": bearish_order_block,
         "bullish_order_block_retest": bullish_ob_retest,
@@ -521,6 +592,64 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
     macd = _ema(close, 12) - _ema(close, 26)
     macd_signal = _ema(macd, 9)
     rsi = _rsi(close, 14)
+    # Keep chart formulas consistent with the stock-detail scoring snapshot.
+    high = np.asarray([float(row.high) for row in sample], dtype=float)
+    low = np.asarray([float(row.low) for row in sample], dtype=float)
+    true_range = np.zeros(close.shape, dtype=float)
+    if close.size:
+        true_range[0] = high[0] - low[0]
+    if close.size > 1:
+        true_range[1:] = np.maximum.reduce(
+            [high[1:] - low[1:], np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])]
+        )
+    atr14 = _sma(true_range, 14)
+    plus_dm = np.zeros(close.shape, dtype=float)
+    minus_dm = np.zeros(close.shape, dtype=float)
+    if close.size > 1:
+        up_move = high[1:] - high[:-1]
+        down_move = low[:-1] - low[1:]
+        plus_dm[1:] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm[1:] = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    plus_di = np.divide(
+        _sma(plus_dm, 14) * 100.0, atr14,
+        out=np.zeros(close.shape, dtype=float),
+        where=np.isfinite(atr14) & (atr14 > 0),
+    )
+    minus_di = np.divide(
+        _sma(minus_dm, 14) * 100.0, atr14,
+        out=np.zeros(close.shape, dtype=float),
+        where=np.isfinite(atr14) & (atr14 > 0),
+    )
+    di_sum = plus_di + minus_di
+    dx = np.divide(
+        np.abs(plus_di - minus_di) * 100.0, di_sum,
+        out=np.zeros(close.shape, dtype=float), where=di_sum > 0,
+    )
+    adx14 = _sma(dx, 14)
+    stoch_k = np.full(close.shape, np.nan, dtype=float)
+    stoch_d = np.full(close.shape, np.nan, dtype=float)
+    for index in range(13, close.size):
+        highest = float(np.max(high[index - 13 : index + 1]))
+        lowest = float(np.min(low[index - 13 : index + 1]))
+        stoch_k[index] = (
+            50.0 if highest == lowest
+            else 100.0 * (close[index] - lowest) / (highest - lowest)
+        )
+        if index >= 15:
+            stoch_d[index] = float(np.mean(stoch_k[index - 2 : index + 1]))
+    obv = np.zeros(close.shape, dtype=float)
+    for index in range(1, close.size):
+        if close[index] > close[index - 1]:
+            obv[index] = obv[index - 1] + volume[index]
+        elif close[index] < close[index - 1]:
+            obv[index] = obv[index - 1] - volume[index]
+        else:
+            obv[index] = obv[index - 1]
+    obv_base = float(obv[0]) if obv.size else 0.0
+    obv_index = (
+        (obv - obv_base + 100.0) if obv.size and np.any(obv != obv_base)
+        else np.full(close.shape, 100.0, dtype=float)
+    )
     rolling_std20 = np.full(close.shape, np.nan, dtype=float)
     for index in range(19, close.size):
         rolling_std20[index] = float(np.std(close[index - 19 : index + 1], ddof=0))
@@ -549,6 +678,13 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
                     else None
                 ),
                 "rsi_14": float(rsi[index]) if np.isfinite(rsi[index]) else None,
+                "atr_14": float(atr14[index]) if np.isfinite(atr14[index]) else None,
+                "adx_14": float(adx14[index]) if np.isfinite(adx14[index]) else None,
+                "plus_di_14": float(plus_di[index]),
+                "minus_di_14": float(minus_di[index]),
+                "stoch_k_14": float(stoch_k[index]) if np.isfinite(stoch_k[index]) else None,
+                "stoch_d_3": float(stoch_d[index]) if np.isfinite(stoch_d[index]) else None,
+                "obv_index_100": float(obv_index[index]),
             }
         )
     return result
