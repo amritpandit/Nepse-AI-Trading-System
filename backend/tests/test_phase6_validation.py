@@ -132,8 +132,8 @@ class TestFullWorkflowCycleTime:
         result = engine.run(
             strategy=strategy,
             symbols=["CYCLE"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
         elapsed = time.perf_counter() - start
 
@@ -154,7 +154,7 @@ class TestFullWorkflowCycleTime:
         metrics = engine.run(
             strategy=strategy,
             symbols=["EXP"],
-            start_date="2024-01-01",
+            start_date=date(2024, 1, 1),
             end_date="2024-01-20",
         )
 
@@ -190,8 +190,8 @@ class TestExportSchemaValidation:
         bundle = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
 
         assert isinstance(bundle, dict)
@@ -351,8 +351,8 @@ class TestBacktestDeterminism:
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
         config = BacktestConfig(
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
             initial_capital=1000000.0,
             commission_rate=0.005,
             slippage_bps=5.0,
@@ -388,8 +388,8 @@ class TestBacktestDeterminism:
         self, db_session: Session, strategy_with_prices: Strategy
     ) -> None:
         config = BacktestConfig(
-            start_date="2024-01-01",
-            end_date="2024-04-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 4, 30),
             initial_capital=1000000.0,
             commission_rate=0.005,
             slippage_bps=5.0,
@@ -651,7 +651,7 @@ class TestDataQualityGateEnforcement:
             engine.run(
                 strategy=strategy_with_prices,
                 symbols=["NONEXISTENT"],
-                start_date="2024-01-01",
+                start_date=date(2024, 1, 1),
                 end_date="2024-01-10",
             )
         except Exception:
@@ -670,8 +670,8 @@ class TestPhase6EndToEnd:
         result = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
 
         bundle = {
@@ -715,14 +715,14 @@ class TestBacktestDeterminismStrict:
         r1 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
         r2 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
 
         assert r1["equity_curve"] == r2["equity_curve"]
@@ -740,14 +740,14 @@ class TestBacktestDeterminismStrict:
         r1 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
         r2 = engine.run(
             strategy=strategy_with_prices,
             symbols=["TEST"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
 
         h1 = hashlib.sha256(json.dumps(r1, sort_keys=True).encode()).hexdigest()
@@ -887,7 +887,7 @@ class TestPhase6CycleTimeDetailed:
         result = engine.run(
             strategy=strategy,
             symbols=["PERF"],
-            start_date="2024-01-01",
+            start_date=date(2024, 1, 1),
             end_date="2024-03-31",
         )
         elapsed = time.perf_counter() - start
@@ -901,8 +901,8 @@ class TestPhase6CycleTimeDetailed:
         metrics = engine.run(
             strategy=strategy,
             symbols=["BUNDLE"],
-            start_date="2024-01-01",
-            end_date="2024-01-30",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 30),
         )
         start = time.perf_counter()
         bundle = {
@@ -932,7 +932,7 @@ class TestPhase6CycleTimeDetailed:
         engine.run(
             strategy=strategy,
             symbols=["LAT"],
-            start_date="2024-01-01",
+            start_date=date(2024, 1, 1),
             end_date="2024-02-10",
         )
         elapsed = time.perf_counter() - start
