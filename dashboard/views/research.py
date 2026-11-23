@@ -137,6 +137,7 @@ def page_research() -> None:
                 score_buy.metric("BUY score / 100", data.get("buy_score", 0))
                 score_sell.metric("SELL score / 100", data.get("sell_score", 0))
                 score_margin.metric("BUY − SELL margin", data.get("score_margin", 0))
+                st.caption("Scores are weighted evidence points out of 100, not probability of profit.")
                 score_model = data.get("score_model", {})
                 components = score_model.get("components", {})
                 if components:
@@ -151,11 +152,41 @@ def page_research() -> None:
                                 "Evidence": item.get("reason") or item.get("methodology") or item.get("relative_strength_20d") or item.get("rsi_14") or item.get("macd_histogram") or item.get("volume_ratio_20d") or "",
                             }
                         )
+                    score_frame = pd.DataFrame(component_rows)
                     render_table(
-                        pd.DataFrame(component_rows),
+                        score_frame,
                         key="research_score_components",
                         name=f"{symbol}_score_components",
                         height=300,
+                    )
+                    score_figure = go.Figure()
+                    score_figure.add_trace(
+                        go.Bar(
+                            y=score_frame["Factor"],
+                            x=score_frame["BUY points"],
+                            orientation="h",
+                            name="BUY evidence",
+                        )
+                    )
+                    score_figure.add_trace(
+                        go.Bar(
+                            y=score_frame["Factor"],
+                            x=-score_frame["SELL points"],
+                            orientation="h",
+                            name="SELL evidence (negative axis)",
+                        )
+                    )
+                    score_figure.update_layout(
+                        barmode="relative",
+                        height=360,
+                        title="Directional evidence by model component",
+                        xaxis_title="BUY points ← 0 → SELL points",
+                        yaxis_title="",
+                        legend=dict(orientation="h", y=1.02, x=0),
+                    )
+                    st.plotly_chart(score_figure, use_container_width=True)
+                    st.caption(
+                        "Scores are weighted evidence points, not a calibrated probability or expected return."
                     )
                 chart_rows = data.get("price_history_for_chart", [])
                 if chart_rows:
