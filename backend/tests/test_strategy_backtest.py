@@ -2,7 +2,9 @@
 
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
+import numpy as np
 import polars as pl
 from app.models.benchmark import NEPSEIndex, SectorIndex
 from app.models.price import Price
@@ -203,6 +205,58 @@ class TestBacktestEngine:
         expected = (1.21 ** (252 / 2)) - 1
         assert metrics["annualized_return"] == round(expected, 6)
         assert metrics["trading_days"] == 3
+ 
+    def test_exit_fills_next_bar_open_and_keeps_unfilled_shares(
+        self, db_session: Session
+    ) -> None:
+        _seed_price_data(db_session, "TEST", "2024-01-01", count=3)
+        db_session.commit()
+
+        prices = db_session.scalars(
+            select(Price)
+            .join(Stock, Price.stock_id == Stock.id)
+            .where(Stock.symbol == "TEST")
+            .order_by(Price.date)
+        ).all()
+        prices[0].open = Decimal("100")
+        prices[0].close = Decimal("100")
+        prices[0].volume = 1000
+        prices[1].open = Decimal("105")
+        prices[1].close = Decimal("105")
+        prices[1].volume = 1000
+        prices[2].open = Decimal("90")
+        prices[2].close = Decimal("90")
+        prices[2].volume = 10
+        db_session.commit()
+
+        engine = BacktestEngine(
+            initial_capital=Decimal("100000"),
+            commission_rate=Decimal("0"),
+            slippage_bps=Decimal("0"),
+            data_quality_gate=None,
+        )
+        engine.gate.assert_safe_for_backtest = lambda symbol, date_str: None
+        engine._get_features = lambda symbol, date_str: {}
+        engine._should_enter = lambda symbol, date_str, features, rules: date_str == "2024-01-01"
+        engine._should_exit = (
+            lambda symbol, date_str, features, rules, position, price_row:
+            date_str == "2024-01-02"
+        )
+        strategy = SimpleNamespace(
+            id=1,
+            name="next-open-exit-test",
+            version="1",
+            config={"symbols": ["TEST"], "risk_rules": [], "entry_rules": [], "exit_rules": []},
+        )
+
+        result = engine.run(strategy, ["TEST"], "2024-01-01", "2024-01-03")
+        sells = [trade for trade in result["trades"] if trade["action"] == "SELL"]
+
+        assert len(sells) == 1
+        assert sells[0]["timestamp"].startswith("2024-01-03")
+        assert sells[0]["price"] == 90.0
+        assert sells[0]["quantity"] == 3.0
+        assert result["equity_curve"][-1]["positions_value"] == 8730.0
 
 
 class TestBenchmarkService:
