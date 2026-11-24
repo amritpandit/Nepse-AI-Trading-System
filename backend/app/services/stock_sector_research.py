@@ -273,12 +273,16 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     bullish_engulfing = (
         previous_bearish
         and current_bullish
+        and previous_close is not None
+        and previous_open is not None
         and current_open <= float(previous_close)
         and current_close >= float(previous_open)
     )
     bearish_engulfing = (
         previous_bullish
         and current_bearish
+        and previous_close is not None
+        and previous_open is not None
         and current_open >= float(previous_close)
         and current_close <= float(previous_open)
     )
@@ -538,17 +542,16 @@ def _score_signal(
     else:
         record("market_regime", 10, evidence={"reason": "No confirmed market trend"})
 
-    sector_relative_strengths = (
-        [
-            sector.get("relative_strength_vs_nepse_20d"),
-            sector.get("relative_strength_vs_nepse_60d"),
-            sector.get("relative_strength_vs_nepse_120d"),
-        ]
-        if sector else []
-    )
-    sector_relative_strengths = [
-        float(value) for value in sector_relative_strengths if value is not None
-    ]
+    sector_relative_strengths: list[float] = []
+    if sector is not None:
+        for key in (
+            "relative_strength_vs_nepse_20d",
+            "relative_strength_vs_nepse_60d",
+            "relative_strength_vs_nepse_120d",
+        ):
+            value = sector.get(key)
+            if value is not None:
+                sector_relative_strengths.append(float(value))
     sector_positive_count = sum(value > 0 for value in sector_relative_strengths)
     sector_negative_count = sum(value < 0 for value in sector_relative_strengths)
     if sector_positive_count >= 2:
@@ -1133,25 +1136,25 @@ def _historical_score_validation(
     # strength inputs. A single 20-session value is not enough to represent
     # the three-horizon sector component used by _score_signal.
     sector_returns: dict[int, dict[date, list[float]]] = {
-        horizon: {} for horizon in (20, 60, 120)
+        sector_horizon: {} for sector_horizon in (20, 60, 120)
     }
     for member_history in sector_histories:
         member_rows = _valid_history(member_history)
-        for horizon in (20, 60, 120):
-            for index in range(horizon, len(member_rows)):
-                earlier = float(member_rows[index - horizon].close)
+        for sector_horizon in (20, 60, 120):
+            for index in range(sector_horizon, len(member_rows)):
+                earlier = float(member_rows[index - sector_horizon].close)
                 current = float(member_rows[index].close)
                 if earlier > 0:
-                    sector_returns[horizon].setdefault(
+                    sector_returns[sector_horizon].setdefault(
                         member_rows[index].date, []
                     ).append(current / earlier - 1.0)
     sector_medians_by_horizon = {
-        horizon: {
+        sector_horizon: {
             day: float(statistics.median(values))
             for day, values in dated_values.items()
             if values
         }
-        for horizon, dated_values in sector_returns.items()
+        for sector_horizon, dated_values in sector_returns.items()
     }
     benchmark_by_date = {row.date: row for row in benchmark_rows}
 
@@ -1359,7 +1362,7 @@ class StockSectorResearchService:
             )
         ).all()
         # Keep enough observations for 3- to 10-month relative-strength features.
-        histories = history_map if history_map is not None else self._load_histories(stocks, 260)
+        histories = history_map if history_map is not None else self._load_histories(list(stocks), 260)
         grouped: dict[str, list[float]] = {}
         grouped60: dict[str, list[float]] = {}
         grouped120: dict[str, list[float]] = {}
@@ -1555,14 +1558,14 @@ class StockSectorResearchService:
         }
         score_strength = max(buy_score, sell_score) / 100.0
         if benchmark_rows is None:
-            benchmark_rows = self.session.scalars(
+            benchmark_rows = list(self.session.scalars(
                 sa.select(NEPSEIndex)
                 .where(
                     NEPSEIndex.date >= clean[0].date,
                     NEPSEIndex.date <= clean[-1].date,
                 )
                 .order_by(NEPSEIndex.date)
-            ).all()
+            ).all())
         if include_historical_validation:
             if sector_price_histories is None and stock.sector:
                 sector_stocks = self.session.scalars(
@@ -1572,7 +1575,7 @@ class StockSectorResearchService:
                         Stock.sector == stock.sector,
                     )
                 ).all()
-                sector_history_map = self._load_histories(sector_stocks, 800)
+                sector_history_map = self._load_histories(list(sector_stocks), 800)
                 sector_price_histories = [
                     sector_history_map.get(member.id, [])
                     for member in sector_stocks
@@ -1580,7 +1583,7 @@ class StockSectorResearchService:
                 ]
             score_validation = _historical_score_validation(
                 clean,
-                list(benchmark_rows),
+                list(benchmark_rows or []),
                 sector_price_histories or [],
             )
         else:
@@ -1606,16 +1609,18 @@ class StockSectorResearchService:
             suggested_target = None
         high60 = indicators.get("high_60d")
         low60 = indicators.get("low_60d")
+        high60_value = float(high60) if isinstance(high60, (int, float)) else None
+        low60_value = float(low60) if isinstance(low60, (int, float)) else None
         fib_range = (
-            float(high60) - float(low60)
-            if high60 is not None and low60 is not None
+            high60_value - low60_value
+            if high60_value is not None and low60_value is not None
             else None
         )
         fibonacci_levels = (
             {
-                "retracement_38_2": round(float(high60) - 0.382 * fib_range, 2),
-                "retracement_50_0": round(float(high60) - 0.5 * fib_range, 2),
-                "retracement_61_8": round(float(high60) - 0.618 * fib_range, 2),
+                "retracement_38_2": round(high60_value - 0.382 * fib_range, 2),
+                "retracement_50_0": round(high60_value - 0.5 * fib_range, 2),
+                "retracement_61_8": round(high60_value - 0.618 * fib_range, 2),
             }
             if fib_range is not None and fib_range > 0
             else {}
@@ -1660,7 +1665,7 @@ class StockSectorResearchService:
                 "calendar_days_old": latest_age_days,
                 "max_age_calendar_days_for_new_trigger": 7,
             },
-            "historical_event_study": _historical_event_study(clean, list(benchmark_rows)),
+            "historical_event_study": _historical_event_study(clean, list(benchmark_rows or [])),
             "historical_score_validation": score_validation,
             "data_quality": {
                 "status": "warning" if warnings or discontinuity["flagged"] else "usable",
@@ -1687,9 +1692,9 @@ class StockSectorResearchService:
         market = _market_regime(self.session)
         # A bulk scan needs 200-session trend/momentum plus a 220-bar chart;
         # reuse the same bounded batch for sector and individual-stock calculations.
-        histories = self._load_histories(stocks, 260)
+        histories = self._load_histories(list(stocks), 260)
         sectors = self._sector_summary(
-            stocks,
+            list(stocks),
             market_context=market,
             history_map=histories,
         )
