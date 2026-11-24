@@ -616,6 +616,8 @@ def page_research() -> None:
             status = st.empty()
             offset = 0
             total_inserted = total_updated = total_rejected = 0
+            failed_symbols: list[str] = []
+            import_errors: list[dict] = []
             batch_number = 0
             try:
                 while True:
@@ -631,6 +633,15 @@ def page_research() -> None:
                     total_inserted += int(result.get("rows_inserted", 0))
                     total_updated += int(result.get("rows_updated", 0))
                     total_rejected += int(result.get("rows_rejected", 0))
+                    batch_errors = result.get("errors", [])
+                    import_errors.extend(
+                        item for item in batch_errors if isinstance(item, dict)
+                    )
+                    failed_symbols.extend(
+                        str(item.get("symbol"))
+                        for item in batch_errors
+                        if isinstance(item, dict) and item.get("symbol")
+                    )
                     count = max(int(result.get("catalogue_tradable_equities", 1)), 1)
                     next_offset = result.get("next_offset")
                     progress.progress(min((offset + int(result.get("symbols_requested", 0))) / count, 1.0))
@@ -642,10 +653,19 @@ def page_research() -> None:
                         break
                     offset = int(next_offset)
                 progress.progress(1.0)
-                st.success(
-                    f"Import completed. Inserted {total_inserted:,} rows, "
-                    f"updated {total_updated:,} rows, rejected {total_rejected:,} rows."
-                )
+                if failed_symbols:
+                    st.warning(
+                        f"Import finished with {len(set(failed_symbols))} symbol download failures. "
+                        "The successful rows were saved; retry the listed symbols before trusting "
+                        "a complete-universe scan."
+                    )
+                    st.write("Symbols requiring retry:", sorted(set(failed_symbols)))
+                    st.json(import_errors[:20])
+                else:
+                    st.success(
+                        f"Import completed. Inserted {total_inserted:,} rows, "
+                        f"updated {total_updated:,} rows, rejected {total_rejected:,} rows."
+                    )
             except requests.RequestException as exc:
                 st.error(
                     f"Import stopped at offset {offset}. {exc} "
