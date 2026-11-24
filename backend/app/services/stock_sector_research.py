@@ -1129,20 +1129,29 @@ def _historical_score_validation(
     buy_dates: list[str] = []
     sell_dates: list[str] = []
 
-    sector_returns: dict[date, list[float]] = {}
+    # Match the live scoring model's 20/60/120-session sector-relative
+    # strength inputs. A single 20-session value is not enough to represent
+    # the three-horizon sector component used by _score_signal.
+    sector_returns: dict[int, dict[date, list[float]]] = {
+        horizon: {} for horizon in (20, 60, 120)
+    }
     for member_history in sector_histories:
         member_rows = _valid_history(member_history)
-        for index in range(20, len(member_rows)):
-            earlier = float(member_rows[index - 20].close)
-            current = float(member_rows[index].close)
-            if earlier > 0:
-                sector_returns.setdefault(member_rows[index].date, []).append(
-                    current / earlier - 1.0
-                )
-    sector_median_by_date = {
-        day: float(statistics.median(values))
-        for day, values in sector_returns.items()
-        if values
+        for horizon in (20, 60, 120):
+            for index in range(horizon, len(member_rows)):
+                earlier = float(member_rows[index - horizon].close)
+                current = float(member_rows[index].close)
+                if earlier > 0:
+                    sector_returns[horizon].setdefault(
+                        member_rows[index].date, []
+                    ).append(current / earlier - 1.0)
+    sector_medians_by_horizon = {
+        horizon: {
+            day: float(statistics.median(values))
+            for day, values in dated_values.items()
+            if values
+        }
+        for horizon, dated_values in sector_returns.items()
     }
     benchmark_by_date = {row.date: row for row in benchmark_rows}
 
@@ -1154,14 +1163,19 @@ def _historical_score_validation(
             indicators = _indicator_snapshot(prefix)
             smc = _smc_snapshot(prefix)
             market = _market_context_at_date(benchmark_rows, rows[index].date)
-            sector_return = sector_median_by_date.get(rows[index].date)
             sector: dict[str, Any] | None = None
-            if sector_return is not None and market.get("return_20d") is not None:
-                sector = {
-                    "relative_strength_vs_nepse_20d": (
-                        sector_return - float(market["return_20d"])
+            sector_relative_strength: dict[str, float] = {}
+            for horizon in (20, 60, 120):
+                sector_return = sector_medians_by_horizon[horizon].get(
+                    rows[index].date
+                )
+                market_return = market.get(f"return_{horizon}d")
+                if sector_return is not None and market_return is not None:
+                    sector_relative_strength[f"relative_strength_vs_nepse_{horizon}d"] = (
+                        sector_return - float(market_return)
                     )
-                }
+            if sector_relative_strength:
+                sector = sector_relative_strength
             score = _score_signal(indicators, smc, market, sector)
             buy_score = int(score["buy_score"])
             sell_score = int(score["sell_score"])
