@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import httpx
+import numpy as np
 import sqlalchemy as sa
 from app.models.benchmark import NEPSEIndex
 from app.models.price import Price
@@ -22,8 +23,10 @@ from app.services.stock_sector_research import (
     _chart_series,
     _indicator_snapshot,
     _historical_score_validation,
+    _rsi,
     _score_signal,
     _smc_snapshot,
+    _wilder,
 )
 from sqlalchemy.orm import Session
 
@@ -254,6 +257,25 @@ def test_weighted_score_model_handles_bearish_evidence() -> None:
     assert result["sell_score"] == 100
     assert result["buy_score"] == 0
     assert result["score_margin"] == -100
+
+
+def test_wilder_rma_uses_initial_period_mean_and_recursive_smoothing() -> None:
+    result = _wilder(np.asarray([1.0, 2.0, 3.0, 4.0, 5.0]), 3)
+    assert np.isnan(result[0])
+    assert np.isnan(result[1])
+    assert result[2] == 2.0
+    assert abs(result[3] - (8.0 / 3.0)) < 1e-12
+    assert abs(result[4] - (31.0 / 9.0)) < 1e-12
+
+
+def test_wilder_rsi_handles_rising_falling_and_flat_prices() -> None:
+    rising = _rsi(np.arange(20.0), 14)
+    falling = _rsi(np.arange(20.0, 0.0, -1.0), 14)
+    flat = _rsi(np.full(20, 100.0), 14)
+
+    assert rising[14] == 100.0
+    assert falling[14] == 0.0
+    assert flat[14] == 50.0
 
 
 def test_smc_rules_do_not_emit_structure_without_minimum_history() -> None:
