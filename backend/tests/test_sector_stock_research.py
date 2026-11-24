@@ -288,6 +288,10 @@ def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -
 
     assert indicators["sma_20"] is not None
     assert indicators["macd_histogram"] is not None
+    assert indicators["adx_14"] is not None
+    assert indicators["stoch_k_14"] is not None
+    assert indicators["stoch_d_3"] is not None
+    assert indicators["obv"] is not None
     assert len(chart) == 220
     assert {
         "open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200",
