@@ -171,7 +171,6 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
     obv_sma20 = _sma(obv, 20)
     obv_rising = bool(close.size >= 20 and obv[-1] > obv[-20])
 
-    avg_volume20 = _sma(volume, 20)
     prior_avg_volume20 = float(np.mean(volume[-21:-1])) if volume.size >= 21 else None
     volume_ratio = (
         float(volume[-1] / prior_avg_volume20)
@@ -806,13 +805,6 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
                 "bearish_engulfing": bearish_engulfing,
                 "hammer": hammer,
                 "shooting_star": shooting_star,
-                "atr_14": float(atr14[index]) if np.isfinite(atr14[index]) else None,
-                "adx_14": float(adx14[index]) if np.isfinite(adx14[index]) else None,
-                "plus_di_14": float(plus_di[index]),
-                "minus_di_14": float(minus_di[index]),
-                "stoch_k_14": float(stoch_k[index]) if np.isfinite(stoch_k[index]) else None,
-                "stoch_d_3": float(stoch_d[index]) if np.isfinite(stoch_d[index]) else None,
-                "obv": float(obv[index]),
             }
         )
     return result
