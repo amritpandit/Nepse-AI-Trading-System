@@ -17,15 +17,16 @@ Every stock receives two separate scores: BUY evidence and SELL evidence. These 
 | Component | Weight | BUY-side evidence | SELL-side evidence |
 |---|---:|---|---|
 | NEPSE regime | 10 | Index close above its 50-session mean, positive 20-session return, and supportive trend | Corresponding bearish regime |
-| Sector relative strength | 10 | Sector median 20-session return above NEPSE | Sector median below NEPSE |
-| Trend structure | 20 | Close > SMA20 > SMA50; SMA200 and ADX strengthen confirmation | Close < SMA20 < SMA50; SMA200 and ADX strengthen confirmation |
+| Sector relative strength | 10 | Sector median 20/60/120-session returns outperform NEPSE over at least two available horizons | Sector median underperforms NEPSE over at least two available horizons |
+| Trend structure | 15 | Close > SMA20 > SMA50; SMA200 and ADX strengthen confirmation | Close < SMA20 < SMA50; SMA200 and ADX strengthen confirmation |
+| Medium-term momentum | 10 | Positive stock returns over at least two of 60/120/200 sessions | Negative stock returns over at least two of 60/120/200 sessions |
 | RSI / Stochastic momentum | 10 | RSI 55–70 with %K not below %D | RSI below 40 with %K below %D; overbought conditions can add limited risk points |
 | MACD | 10 | MACD above signal with non-deteriorating histogram | MACD below signal with non-improving histogram |
 | Volume / OBV | 10 | Positive session with volume expansion; rising OBV is additional confirmation | Negative session with volume expansion; falling OBV is additional confirmation |
-| Price action | 20 | 20-session breakout, bullish engulfing or hammer | 20-session breakdown, bearish engulfing or shooting star |
+| Price action | 15 | 20-session breakout, bullish engulfing or hammer | 20-session breakdown, bearish engulfing or shooting star |
 | SMC rule proxies | 10 | Bullish structure break, liquidity sweep, fair-value-gap or order-block retest proxy | Bearish equivalents |
 
-The code keeps the total weights at 100. The SMC weighting is deliberately smaller than the more observable trend, market, sector, volume and price-action evidence.
+The code keeps the total weights at 100. The SMC weighting is deliberately smaller than the more observable trend, multi-horizon momentum, market, sector, volume and price-action evidence. Sector and index relative strength use 20-, 60- and 120-session horizons; stock medium-term momentum uses 60-, 120- and 200-session returns.
 
 ### Trigger rules
 
