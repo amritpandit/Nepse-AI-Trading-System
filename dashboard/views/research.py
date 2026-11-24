@@ -138,6 +138,32 @@ def page_research() -> None:
                 score_sell.metric("SELL score / 100", data.get("sell_score", 0))
                 score_margin.metric("BUY − SELL margin", data.get("score_margin", 0))
                 st.caption("Scores are weighted evidence points out of 100, not probability of profit.")
+                indicators_snapshot = data.get("indicators", {})
+                risk_cols = st.columns(4)
+                risk_cols[0].metric(
+                    "Last completed close",
+                    f"NPR {float(indicators_snapshot.get('close')):,.2f}"
+                    if indicators_snapshot.get("close") is not None else "—",
+                )
+                risk_cols[1].metric(
+                    "Reference stop",
+                    f"NPR {float(data.get('reference_stop_level')):,.2f}"
+                    if data.get("reference_stop_level") is not None else "—",
+                )
+                risk_cols[2].metric(
+                    "Reference target",
+                    f"NPR {float(data.get('reference_target_level')):,.2f}"
+                    if data.get("reference_target_level") is not None else "—",
+                )
+                risk_cols[3].metric(
+                    "Risk / reward",
+                    f"1 : {float(data.get('reference_risk_reward_ratio')):.1f}"
+                    if data.get("reference_risk_reward_ratio") is not None else "—",
+                )
+                st.caption(
+                    "Stop/target are ATR-based research references for a confirmed trigger only. "
+                    "They are not guaranteed fills or personalized investment advice."
+                )
                 score_model = data.get("score_model", {})
                 components = score_model.get("components", {})
                 if components:
