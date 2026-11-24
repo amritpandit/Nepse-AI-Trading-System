@@ -307,8 +307,9 @@ def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -
     rows = db_session.scalars(
         sa.select(Price).where(Price.stock_id == stock.id).order_by(Price.date)
     ).all()
-    indicators = _indicator_snapshot(rows)
-    chart = _chart_series(rows, _smc_snapshot(rows))
+    price_rows = list(rows)
+    indicators = _indicator_snapshot(price_rows)
+    chart = _chart_series(price_rows, _smc_snapshot(price_rows))
 
     assert indicators["sma_20"] is not None
     assert indicators["macd_histogram"] is not None
