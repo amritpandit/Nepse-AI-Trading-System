@@ -45,107 +45,61 @@ def _sma(values: np.ndarray, window: int) -> np.ndarray:
     return result
 
 
+def _wilder(values: np.ndarray, period: int) -> np.ndarray:
+    """Wilder's RMA, seeded by the first complete period of finite values."""
+    result = np.full(values.shape, np.nan, dtype=float)
+    if period <= 0 or values.size < period:
+        return result
+    seed_index: int | None = None
+    for start in range(values.size - period + 1):
+        window = values[start : start + period]
+        if np.isfinite(window).all():
+            seed_index = start + period - 1
+            result[seed_index] = float(np.mean(window))
+            break
+    if seed_index is None:
+        return result
+    for index in range(seed_index + 1, values.size):
+        if np.isfinite(values[index]) and np.isfinite(result[index - 1]):
+            result[index] = (
+                result[index - 1] * (period - 1) + values[index]
+            ) / period
+    return result
+
+
 def _rsi(values: np.ndarray, period: int = 14) -> np.ndarray:
+    """Wilder RSI using the standard initial mean and recursive smoothing."""
     result = np.full(values.shape, np.nan, dtype=float)
     if values.size <= period:
         return result
     changes = np.diff(values)
     gains = np.maximum(changes, 0.0)
     losses = np.maximum(-changes, 0.0)
-    avg_gain = _ema(gains, period)
-    avg_loss = _ema(losses, period)
+    avg_gain = _wilder(gains, period)
+    avg_loss = _wilder(losses, period)
     for index in range(period, values.size):
         gain = avg_gain[index - 1]
         loss = avg_loss[index - 1]
+        if not np.isfinite(gain) or not np.isfinite(loss):
+            continue
         if loss == 0:
             result[index] = 100.0 if gain > 0 else 50.0
+        elif gain == 0:
+            result[index] = 0.0
         else:
             result[index] = 100.0 - (100.0 / (1.0 + gain / loss))
     return result
 
 
-def _valid_history(rows: list[Price]) -> list[Price]:
-    return [
-        row
-        for row in rows
-        if row.close is not None
-        and float(row.close) > 0
-        and row.open is not None
-        and row.high is not None
-        and row.low is not None
-    ]
-
-
-def _clean_after_latest_discontinuity(rows: list[Price]) -> tuple[list[Price], dict[str, Any]]:
-    if len(rows) < 2:
-        return rows, {"flagged": False, "event_date": None}
-    event_index: int | None = None
-    for index in range(1, len(rows)):
-        previous = float(rows[index - 1].close)
-        current = float(rows[index].close)
-        if previous > 0 and abs(current / previous - 1.0) > DISCONTINUITY_THRESHOLD:
-            event_index = index
-    if event_index is None:
-        return rows, {"flagged": False, "event_date": None}
-    return rows[event_index:], {
-        "flagged": True,
-        "event_date": rows[event_index].date.isoformat(),
-        "reason": "Possible corporate action or abnormal source price jump",
-    }
-
-
-def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
-    close = np.asarray([float(row.close) for row in rows], dtype=float)
-    high = np.asarray([float(row.high) for row in rows], dtype=float)
-    low = np.asarray([float(row.low) for row in rows], dtype=float)
-    volume = np.asarray([float(row.volume or 0) for row in rows], dtype=float)
-
-    sma20 = _sma(close, 20)
-    sma50 = _sma(close, 50)
-    sma200 = _sma(close, 200)
-    ema12 = _ema(close, 12)
-    ema26 = _ema(close, 26)
-    macd = ema12 - ema26
-    macd_signal = _ema(macd, 9)
-    rsi = _rsi(close, 14)
-
-    true_range = np.full(close.shape, np.nan, dtype=float)
-    if close.size:
-        true_range[0] = high[0] - low[0]
-    if close.size > 1:
-        true_range[1:] = np.maximum.reduce(
-            [high[1:] - low[1:], np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])]
-        )
-    atr14 = _sma(true_range, 14)
-
-    # Directional movement / ADX: trend-strength evidence, not direction by itself.
-    plus_dm = np.zeros(close.shape, dtype=float)
-    minus_dm = np.zeros(close.shape, dtype=float)
-    if close.size > 1:
-        up_move = high[1:] - high[:-1]
-        down_move = low[:-1] - low[1:]
-        plus_dm[1:] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-        minus_dm[1:] = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    plus_dm14 = _sma(plus_dm, 14)
-    minus_dm14 = _sma(minus_dm, 14)
-    plus_di = np.divide(
-        plus_dm14 * 100.0, atr14,
-        out=np.zeros(close.shape, dtype=float),
-        where=np.isfinite(atr14) & (atr14 > 0),
-    )
-    minus_di = np.divide(
-        minus_dm14 * 100.0, atr14,
-        out=np.zeros(close.shape, dtype=float),
-        where=np.isfinite(atr14) & (atr14 > 0),
-    )
-    di_sum = plus_di + minus_di
-    dx = np.divide(
-        np.abs(plus_di - minus_di) * 100.0,
-        di_sum,
-        out=np.zeros(close.shape, dtype=float),
-        where=di_sum > 0,
-    )
-    adx14 = _sma(dx, 14)
+def _adx_series(
+    close: np.ndarray,
+    high: np.ndarray,
+    low: np.ndarray,
+    period: int = 14,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return Wilder ATR, +DI, -DI and ADX series for completed OHLC bars."""
+    # Standard Wilder-smoothed ATR, directional movement and ADX.
+    atr14, plus_di, minus_di, adx14 = _adx_series(close, high, low, 14)
 
     # Stochastic oscillator (%K/%D) identifies the close within the recent range.
     stoch_k = np.full(close.shape, np.nan, dtype=float)
@@ -688,37 +642,8 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
     # Keep chart formulas consistent with the stock-detail scoring snapshot.
     high = np.asarray([float(row.high) for row in sample], dtype=float)
     low = np.asarray([float(row.low) for row in sample], dtype=float)
-    true_range = np.zeros(close.shape, dtype=float)
-    if close.size:
-        true_range[0] = high[0] - low[0]
-    if close.size > 1:
-        true_range[1:] = np.maximum.reduce(
-            [high[1:] - low[1:], np.abs(high[1:] - close[:-1]), np.abs(low[1:] - close[:-1])]
-        )
-    atr14 = _sma(true_range, 14)
-    plus_dm = np.zeros(close.shape, dtype=float)
-    minus_dm = np.zeros(close.shape, dtype=float)
-    if close.size > 1:
-        up_move = high[1:] - high[:-1]
-        down_move = low[:-1] - low[1:]
-        plus_dm[1:] = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-        minus_dm[1:] = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    plus_di = np.divide(
-        _sma(plus_dm, 14) * 100.0, atr14,
-        out=np.zeros(close.shape, dtype=float),
-        where=np.isfinite(atr14) & (atr14 > 0),
-    )
-    minus_di = np.divide(
-        _sma(minus_dm, 14) * 100.0, atr14,
-        out=np.zeros(close.shape, dtype=float),
-        where=np.isfinite(atr14) & (atr14 > 0),
-    )
-    di_sum = plus_di + minus_di
-    dx = np.divide(
-        np.abs(plus_di - minus_di) * 100.0, di_sum,
-        out=np.zeros(close.shape, dtype=float), where=di_sum > 0,
-    )
-    adx14 = _sma(dx, 14)
+    # Keep chart overlays identical to scoring: Wilder ATR and ADX.
+    atr14, plus_di, minus_di, adx14 = _adx_series(close, high, low, 14)
     stoch_k = np.full(close.shape, np.nan, dtype=float)
     stoch_d = np.full(close.shape, np.nan, dtype=float)
     for index in range(13, close.size):
