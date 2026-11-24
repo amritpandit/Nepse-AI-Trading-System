@@ -250,6 +250,8 @@ def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
         "low_60d": float(np.min(low[-60:])) if close.size >= 60 else None,
         "return_20d": float(close[-1] / close[-21] - 1.0) if close.size >= 21 else None,
         "return_60d": float(close[-1] / close[-61] - 1.0) if close.size >= 61 else None,
+        "return_120d": float(close[-1] / close[-121] - 1.0) if close.size >= 121 else None,
+        "return_200d": float(close[-1] / close[-201] - 1.0) if close.size >= 201 else None,
         "bars": int(close.size),
     }
 
@@ -431,13 +433,41 @@ def _score_signal(
     else:
         record("market_regime", 10, evidence={"reason": "No confirmed market trend"})
 
-    relative_strength = sector.get("relative_strength_vs_nepse_20d") if sector else None
-    if relative_strength is not None and relative_strength > 0:
-        record("sector_strength", 10, buy_points=10, evidence={"relative_strength_20d": relative_strength})
-    elif relative_strength is not None and relative_strength < 0:
-        record("sector_strength", 10, sell_points=10, evidence={"relative_strength_20d": relative_strength})
+    sector_relative_strengths = (
+        [
+            sector.get("relative_strength_vs_nepse_20d"),
+            sector.get("relative_strength_vs_nepse_60d"),
+            sector.get("relative_strength_vs_nepse_120d"),
+        ]
+        if sector else []
+    )
+    sector_relative_strengths = [
+        float(value) for value in sector_relative_strengths if value is not None
+    ]
+    sector_positive_count = sum(value > 0 for value in sector_relative_strengths)
+    sector_negative_count = sum(value < 0 for value in sector_relative_strengths)
+    if sector_positive_count >= 2:
+        sector_points, sector_side = 10, "BUY"
+    elif sector_positive_count == 1:
+        sector_points, sector_side = 5, "BUY"
+    elif sector_negative_count >= 2:
+        sector_points, sector_side = 10, "SELL"
+    elif sector_negative_count == 1:
+        sector_points, sector_side = 5, "SELL"
     else:
-        record("sector_strength", 10, evidence={"reason": "Sector relative strength unavailable or flat"})
+        sector_points, sector_side = 0, "NEUTRAL"
+    record(
+        "sector_strength",
+        10,
+        buy_points=sector_points if sector_side == "BUY" else 0,
+        sell_points=sector_points if sector_side == "SELL" else 0,
+        evidence={
+            "relative_strength_vs_nepse": sector_relative_strengths,
+            "positive_horizons": sector_positive_count,
+            "negative_horizons": sector_negative_count,
+            "method": "20/60/120-session median constituent returns versus NEPSE",
+        },
+    )
 
     close = indicators["close"]
     sma20 = indicators.get("sma_20")
@@ -446,10 +476,10 @@ def _score_signal(
     adx = indicators.get("adx_14")
     trend_strength_confirmed = adx is None or adx >= 20.0
     if sma20 is not None and sma50 is not None and close > sma20 > sma50:
-        points = 20 if (sma200 is None or sma50 > sma200) and trend_strength_confirmed else 15
+        points = 15 if (sma200 is None or sma50 > sma200) and trend_strength_confirmed else 11
         record(
             "trend_structure",
-            20,
+            15,
             buy_points=points,
             evidence={
                 "reason": "Close above SMA20 and SMA20 above SMA50",
@@ -458,10 +488,10 @@ def _score_signal(
             },
         )
     elif sma20 is not None and sma50 is not None and close < sma20 < sma50:
-        points = 20 if (sma200 is None or sma50 < sma200) and trend_strength_confirmed else 15
+        points = 15 if (sma200 is None or sma50 < sma200) and trend_strength_confirmed else 11
         record(
             "trend_structure",
-            20,
+            15,
             sell_points=points,
             evidence={
                 "reason": "Close below SMA20 and SMA20 below SMA50",
@@ -470,11 +500,46 @@ def _score_signal(
             },
         )
     elif sma20 is not None and close > sma20:
-        record("trend_structure", 20, buy_points=8, evidence={"reason": "Close above SMA20 only"})
+        record("trend_structure", 15, buy_points=6, evidence={"reason": "Close above SMA20 only"})
     elif sma20 is not None and close < sma20:
-        record("trend_structure", 20, sell_points=8, evidence={"reason": "Close below SMA20 only"})
+        record("trend_structure", 15, sell_points=6, evidence={"reason": "Close below SMA20 only"})
     else:
-        record("trend_structure", 20, evidence={"reason": "No usable moving-average trend"})
+        record("trend_structure", 15, evidence={"reason": "No usable moving-average trend"})
+
+    medium_term_returns = [
+        indicators.get("return_60d"),
+        indicators.get("return_120d"),
+        indicators.get("return_200d"),
+    ]
+    valid_medium_term_returns = [
+        float(value) for value in medium_term_returns if value is not None
+    ]
+    positive_momentum_count = sum(value > 0 for value in valid_medium_term_returns)
+    negative_momentum_count = sum(value < 0 for value in valid_medium_term_returns)
+    if positive_momentum_count >= 2:
+        medium_points, medium_side = 10, "BUY"
+    elif positive_momentum_count == 1:
+        medium_points, medium_side = 5, "BUY"
+    elif negative_momentum_count >= 2:
+        medium_points, medium_side = 10, "SELL"
+    elif negative_momentum_count == 1:
+        medium_points, medium_side = 5, "SELL"
+    else:
+        medium_points, medium_side = 0, "NEUTRAL"
+    record(
+        "medium_term_momentum",
+        10,
+        buy_points=medium_points if medium_side == "BUY" else 0,
+        sell_points=medium_points if medium_side == "SELL" else 0,
+        evidence={
+            "return_60d": indicators.get("return_60d"),
+            "return_120d": indicators.get("return_120d"),
+            "return_200d": indicators.get("return_200d"),
+            "positive_horizons": positive_momentum_count,
+            "negative_horizons": negative_momentum_count,
+            "method": "multi-horizon time-series momentum",
+        },
+    )
 
     rsi = indicators.get("rsi_14")
     stoch_k = indicators.get("stoch_k_14")
@@ -547,33 +612,33 @@ def _score_signal(
     if indicators.get("breakout_20d"):
         record(
             "price_action",
-            20,
-            buy_points=20,
+            15,
+            buy_points=15,
             evidence={"reason": "Close above previous 20-session high"},
         )
     elif indicators.get("breakdown_20d"):
         record(
             "price_action",
-            20,
-            sell_points=20,
+            15,
+            sell_points=15,
             evidence={"reason": "Close below previous 20-session low"},
         )
     elif indicators.get("bullish_engulfing") or indicators.get("hammer"):
         record(
             "price_action",
-            20,
-            buy_points=7,
+            15,
+            buy_points=5,
             evidence={"reason": "Bullish reversal candle pattern"},
         )
     elif indicators.get("bearish_engulfing") or indicators.get("shooting_star"):
         record(
             "price_action",
-            20,
-            sell_points=7,
+            15,
+            sell_points=5,
             evidence={"reason": "Bearish reversal candle pattern"},
         )
     else:
-        record("price_action", 20, evidence={"reason": "No defined breakout/breakdown candle"})
+        record("price_action", 15, evidence={"reason": "No defined breakout/breakdown candle"})
 
     # SMC is assigned a deliberately smaller weight because these are
     # discretionary concepts approximated from daily OHLC, not order-flow data.
@@ -596,11 +661,12 @@ def _score_signal(
         "weights": {
             "market_regime": 10,
             "sector_relative_strength": 10,
-            "trend_structure": 20,
+            "trend_structure": 15,
+            "medium_term_momentum": 10,
             "rsi_momentum": 10,
             "macd": 10,
             "volume_confirmation": 10,
-            "price_action_breakout_breakdown": 20,
+            "price_action_breakout_breakdown": 15,
             "smc_rule_based_proxies": 10,
         },
     }
@@ -754,7 +820,7 @@ def _chart_series(rows: list[Price], smc: dict[str, Any]) -> list[dict[str, Any]
 
 def _market_regime(session: Session) -> dict[str, Any]:
     rows = session.scalars(
-        sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(220)
+        sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(260)
     ).all()
     rows = list(reversed(rows))
     if len(rows) < 50:
@@ -767,6 +833,9 @@ def _market_regime(session: Session) -> dict[str, Any]:
     sma50 = float(np.mean(closes[-50:])) if closes.size >= 50 else None
     sma200 = float(np.mean(closes[-200:])) if closes.size >= 200 else None
     return20 = float(closes[-1] / closes[-21] - 1.0) if closes.size >= 21 else None
+    return60 = float(closes[-1] / closes[-61] - 1.0) if closes.size >= 61 else None
+    return120 = float(closes[-1] / closes[-121] - 1.0) if closes.size >= 121 else None
+    return200 = float(closes[-1] / closes[-201] - 1.0) if closes.size >= 201 else None
     regime = "sideways"
     if sma50 is not None and return20 is not None:
         if closes[-1] > sma50 and return20 > 0 and (sma200 is None or sma50 > sma200):
@@ -778,6 +847,9 @@ def _market_regime(session: Session) -> dict[str, Any]:
         "as_of": rows[-1].date.isoformat(),
         "index_close": float(closes[-1]),
         "return_20d": return20,
+        "return_60d": return60,
+        "return_120d": return120,
+        "return_200d": return200,
         "sma_50": sma50,
         "sma_200": sma200,
         "observations": int(closes.size),
@@ -934,10 +1006,13 @@ def _market_context_at_date(
     history = [row for row in benchmark_rows if row.date <= as_of]
     if len(history) < 50:
         return {"regime": "unavailable", "return_20d": None, "as_of": as_of.isoformat()}
-    closes = np.asarray([float(row.close) for row in history[-220:]], dtype=float)
+    closes = np.asarray([float(row.close) for row in history[-260:]], dtype=float)
     sma50 = float(np.mean(closes[-50:]))
     sma200 = float(np.mean(closes[-200:])) if closes.size >= 200 else None
     return20 = float(closes[-1] / closes[-21] - 1.0)
+    return60 = float(closes[-1] / closes[-61] - 1.0) if closes.size >= 61 else None
+    return120 = float(closes[-1] / closes[-121] - 1.0) if closes.size >= 121 else None
+    return200 = float(closes[-1] / closes[-201] - 1.0) if closes.size >= 201 else None
     regime = "sideways"
     if closes[-1] > sma50 and return20 > 0 and (sma200 is None or sma50 > sma200):
         regime = "bullish"
@@ -946,6 +1021,9 @@ def _market_context_at_date(
     return {
         "regime": regime,
         "return_20d": return20,
+        "return_60d": return60,
+        "return_120d": return120,
+        "return_200d": return200,
         "index_close": float(closes[-1]),
         "as_of": history[-1].date.isoformat(),
     }
@@ -1198,36 +1276,66 @@ class StockSectorResearchService:
                 Stock.sector.is_not(None),
             )
         ).all()
-        histories = self._load_histories(stocks, 70)
+        # Keep enough observations for 3- to 10-month relative-strength features.
+        histories = self._load_histories(stocks, 260)
         grouped: dict[str, list[float]] = {}
         grouped60: dict[str, list[float]] = {}
+        grouped120: dict[str, list[float]] = {}
+        grouped200: dict[str, list[float]] = {}
         for stock in stocks:
             history = histories.get(stock.id, [])
             clean, event = _clean_after_latest_discontinuity(history)
             if event["flagged"]:
                 continue
-            metrics = _indicator_snapshot(clean) if len(clean) >= 61 else {}
+            metrics = _indicator_snapshot(clean) if len(clean) >= 21 else {}
             ret20 = metrics.get("return_20d")
             ret60 = metrics.get("return_60d")
+            ret120 = metrics.get("return_120d")
+            ret200 = metrics.get("return_200d")
             if ret20 is not None:
                 grouped.setdefault(str(stock.sector), []).append(float(ret20))
             if ret60 is not None:
                 grouped60.setdefault(str(stock.sector), []).append(float(ret60))
+            if ret120 is not None:
+                grouped120.setdefault(str(stock.sector), []).append(float(ret120))
+            if ret200 is not None:
+                grouped200.setdefault(str(stock.sector), []).append(float(ret200))
 
         market = market_context if market_context is not None else _market_regime(self.session)
-        market_return = market.get("return_20d")
+        market_returns = {
+            "20d": market.get("return_20d"),
+            "60d": market.get("return_60d"),
+            "120d": market.get("return_120d"),
+            "200d": market.get("return_200d"),
+        }
         result: dict[str, dict[str, Any]] = {}
         for sector, values in grouped.items():
             med = float(statistics.median(values))
+            med60 = float(statistics.median(grouped60[sector])) if grouped60.get(sector) else None
+            med120 = float(statistics.median(grouped120[sector])) if grouped120.get(sector) else None
+            med200 = float(statistics.median(grouped200[sector])) if grouped200.get(sector) else None
             result[sector] = {
                 "sector": sector,
-                "construction": "median member-stock raw price return (not an official sector index)",
+                "construction": "median member-stock raw price returns (not an official sector index)",
                 "return_20d": med,
-                "return_60d": (
-                    float(statistics.median(grouped60[sector])) if grouped60.get(sector) else None
-                ),
+                "return_60d": med60,
+                "return_120d": med120,
+                "return_200d": med200,
                 "relative_strength_vs_nepse_20d": (
-                    med - float(market_return) if market_return is not None else None
+                    med - float(market_returns["20d"])
+                    if market_returns["20d"] is not None else None
+                ),
+                "relative_strength_vs_nepse_60d": (
+                    med60 - float(market_returns["60d"])
+                    if med60 is not None and market_returns["60d"] is not None else None
+                ),
+                "relative_strength_vs_nepse_120d": (
+                    med120 - float(market_returns["120d"])
+                    if med120 is not None and market_returns["120d"] is not None else None
+                ),
+                "relative_strength_vs_nepse_200d": (
+                    med200 - float(market_returns["200d"])
+                    if med200 is not None and market_returns["200d"] is not None else None
                 ),
                 "positive_stock_breadth": sum(value > 0 for value in values) / len(values),
                 "stocks_covered": len(values),
