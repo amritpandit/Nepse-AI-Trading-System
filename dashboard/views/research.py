@@ -180,7 +180,7 @@ def page_research() -> None:
                         barmode="relative",
                         height=360,
                         title="Directional evidence by model component",
-                        xaxis_title="BUY points ← 0 → SELL points",
+                        xaxis_title="SELL points ← 0 → BUY points",
                         yaxis_title="",
                         legend=dict(orientation="h", y=1.02, x=0),
                     )
@@ -381,7 +381,6 @@ def page_research() -> None:
                                 row=1,
                                 col=1,
                             )
-                    indicators = data.get("indicators", {})
                     price_action = data.get("price_action", {})
                     for key, label in (
                         ("retracement_38_2", "Fib 38.2%"),
@@ -551,7 +550,7 @@ def page_research() -> None:
         with col1:
             dry_run = st.checkbox("Dry-run only (no database changes)", value=True, key="research_import_dry_run")
         with col2:
-            batch_size = st.selectbox("Symbols per batch", [5, 10, 15], index=2, key="research_import_batch")
+            batch_size = st.selectbox("Symbols per batch", [5, 10, 15], index=0, key="research_import_batch")
         if st.button("Preview First Batch", key="research_import_preview"):
             try:
                 response = requests.post(
