@@ -166,7 +166,7 @@ class NepalMarketDataImporter:
                         session.add(stock)
                         session.flush()
                     stock.name = meta.get("name") or stock.name
-                    stock.sector = meta.get("sector") or None
+                    stock.sector = meta.get("sector") or stock.sector
                     stock.instrument_type = "ordinary"
                     stock.is_active = True
 
@@ -184,14 +184,14 @@ class NepalMarketDataImporter:
                     low = _decimal(row.get("low"))
                     close = _decimal(row.get("close"))
                     volume = _int_value(row.get("traded_quantity")) or 0
-                    values = [value for value in (o, h, low, close) if value is not None]
+                    ohlc_values = [value for value in (o, h, low, close) if value is not None]
                     valid = (
-                        len(values) == 4
-                        and all(value > 0 for value in values)
+                        len(ohlc_values) == 4
+                        and all(value > 0 for value in ohlc_values)
                         and h is not None
                         and low is not None
-                        and h >= max(values)
-                        and low <= min(values)
+                        and h >= max(ohlc_values)
+                        and low <= min(ohlc_values)
                         and volume >= 0
                     )
                     if not valid:
@@ -304,12 +304,12 @@ class NepalMarketDataImporter:
                 continue
             if (start and row_date < start) or (end and row_date > end):
                 continue
-            values = {
+            values: dict[str, float | int] = {
                 "open": float(_decimal(row.get("open")) or close),
                 "high": float(_decimal(row.get("high")) or close),
                 "low": float(_decimal(row.get("low")) or close),
                 "close": float(close),
-                "volume": _int_value(row.get("traded_quantity")),
+                "volume": int(_int_value(row.get("traded_quantity")) or 0),
             }
             if values["high"] < max(values["open"], values["close"]):
                 rejected += 1
