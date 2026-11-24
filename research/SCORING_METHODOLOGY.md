@@ -40,7 +40,7 @@ A score of 80 does not mean an 80% chance of profit. Signal strength is only the
 
 ## Indicators and chart
 
-The stock-detail chart contains daily candlesticks, volume, SMA20/50/200, EMA9/21, Bollinger Bands, MACD and signal line with histogram, RSI(14), Stochastic %K/%D, ADX(14) with +DI/-DI, OBV, and candle-pattern markers. Price references include recent support/resistance and Fibonacci retracement levels. ATR(14) is used for illustrative stop/target distances.
+The stock-detail chart contains daily candlesticks, volume, SMA20/50/200, EMA9/21, Bollinger Bands, MACD(12,26,9) and signal line with histogram, RSI(14), Stochastic %K(14)/%D(3), ADX(14) with +DI/-DI, OBV, and candle-pattern markers. RSI and the ATR/ADX directional-movement smoothers use Wilder's recursive moving average; ATR(14) is used for illustrative stop/target distances. Bollinger Bands use a 20-session simple moving average and two population standard deviations. Price references include recent support/resistance and Fibonacci retracement levels.
 
 The displayed price/volume and indicator values are derived from completed daily bars. Signals are evaluated after the close; any simulated or paper fill must use a later recorded session. The dashboard does not imply an intraday entry at a price that was not available at the time.
 
