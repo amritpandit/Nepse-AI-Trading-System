@@ -8,6 +8,7 @@ import datetime as dt
 import html
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,10 @@ import plotly.io as pio
 import requests  # type: ignore[import-untyped]
 import streamlit as st
 
-API_BASE = st.secrets.get("API_BASE", "http://127.0.0.1:8000")
+API_BASE = (
+    os.getenv("API_BASE")
+    or st.secrets.get("API_BASE", "http://127.0.0.1:8000")
+).rstrip("/")
 EXPORT_DIR = Path("exports")
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
