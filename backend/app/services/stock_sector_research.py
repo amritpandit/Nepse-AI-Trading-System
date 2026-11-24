@@ -428,9 +428,9 @@ def _score_signal(
     sma50 = indicators.get("sma_50")
     sma200 = indicators.get("sma_200")
     adx = indicators.get("adx_14")
-    trend_strength_confirmed = adx is None or adx >= 20.0
+    trend_strength_confirmed = adx is not None and adx >= 20.0
     if sma20 is not None and sma50 is not None and close > sma20 > sma50:
-        points = 15 if (sma200 is None or sma50 > sma200) and trend_strength_confirmed else 11
+        points = 15 if sma200 is not None and sma50 > sma200 and trend_strength_confirmed else 8
         record(
             "trend_structure",
             15,
@@ -442,7 +442,7 @@ def _score_signal(
             },
         )
     elif sma20 is not None and sma50 is not None and close < sma20 < sma50:
-        points = 15 if (sma200 is None or sma50 < sma200) and trend_strength_confirmed else 11
+        points = 15 if sma200 is not None and sma50 < sma200 and trend_strength_confirmed else 8
         record(
             "trend_structure",
             15,
@@ -498,7 +498,7 @@ def _score_signal(
     rsi = indicators.get("rsi_14")
     stoch_k = indicators.get("stoch_k_14")
     stoch_d = indicators.get("stoch_d_3")
-    stoch_bullish = stoch_k is None or stoch_d is None or stoch_k >= stoch_d
+    stoch_bullish = stoch_k is not None and stoch_d is not None and stoch_k >= stoch_d
     stoch_bearish = stoch_k is not None and stoch_d is not None and stoch_k <= stoch_d
     if rsi is not None and 55 <= rsi <= 70:
         points = 10 if stoch_bullish else 5
@@ -526,14 +526,12 @@ def _score_signal(
     macd_signal = indicators.get("macd_signal")
     previous_hist = indicators.get("previous_macd_histogram")
     current_hist = indicators.get("macd_histogram")
-    if macd is not None and macd_signal is not None and macd > macd_signal and (
-        current_hist is None or previous_hist is None or current_hist >= previous_hist
-    ):
-        record("macd", 10, buy_points=10, evidence={"macd_histogram": current_hist})
-    elif macd is not None and macd_signal is not None and macd < macd_signal and (
-        current_hist is None or previous_hist is None or current_hist <= previous_hist
-    ):
-        record("macd", 10, sell_points=10, evidence={"macd_histogram": current_hist})
+    if macd is not None and macd_signal is not None and current_hist is not None and previous_hist is not None and macd > macd_signal:
+        points = 10 if current_hist >= previous_hist else 5
+        record("macd", 10, buy_points=points, evidence={"macd_histogram": current_hist})
+    elif macd is not None and macd_signal is not None and current_hist is not None and previous_hist is not None and macd < macd_signal:
+        points = 10 if current_hist <= previous_hist else 5
+        record("macd", 10, sell_points=points, evidence={"macd_histogram": current_hist})
     else:
         record("macd", 10, evidence={"macd_histogram": current_hist})
 
@@ -541,7 +539,7 @@ def _score_signal(
     daily_change = indicators.get("daily_return")
     obv_rising = indicators.get("obv_rising_20d")
     if volume_ratio is not None and volume_ratio >= 1.5 and daily_change is not None and daily_change > 0:
-        points = 10 if obv_rising is not False else 5
+        points = 10 if obv_rising is True else 5
         record(
             "volume_confirmation",
             10,
@@ -549,7 +547,7 @@ def _score_signal(
             evidence={"volume_ratio_20d": volume_ratio, "obv_rising_20d": obv_rising},
         )
     elif volume_ratio is not None and volume_ratio >= 1.2 and daily_change is not None and daily_change < 0:
-        points = 10 if obv_rising is not True else 5
+        points = 10 if obv_rising is False else 5
         record(
             "volume_confirmation",
             10,
