@@ -1184,6 +1184,7 @@ class StockSectorResearchService:
         self,
         eligible_stocks: list[Stock] | None = None,
         market_context: dict[str, Any] | None = None,
+        history_map: dict[int, list[Price]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         stocks = eligible_stocks or self.session.scalars(
             sa.select(Stock).where(
@@ -1193,7 +1194,7 @@ class StockSectorResearchService:
             )
         ).all()
         # Keep enough observations for 3- to 10-month relative-strength features.
-        histories = self._load_histories(stocks, 260)
+        histories = history_map if history_map is not None else self._load_histories(stocks, 260)
         grouped: dict[str, list[float]] = {}
         grouped60: dict[str, list[float]] = {}
         grouped120: dict[str, list[float]] = {}
@@ -1519,10 +1520,14 @@ class StockSectorResearchService:
             .order_by(Stock.symbol)
         ).all()
         market = _market_regime(self.session)
-        sectors = self._sector_summary(stocks, market_context=market)
         # A bulk scan needs 200-session trend/momentum plus a 220-bar chart;
-        # detailed single-stock research loads the longer 800-session validation window.
+        # reuse the same bounded batch for sector and individual-stock calculations.
         histories = self._load_histories(stocks, 260)
+        sectors = self._sector_summary(
+            stocks,
+            market_context=market,
+            history_map=histories,
+        )
         benchmark_rows = self.session.scalars(
             sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(800)
         ).all()
