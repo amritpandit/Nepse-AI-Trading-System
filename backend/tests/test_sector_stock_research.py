@@ -198,10 +198,17 @@ def test_weighted_score_model_has_100_points_and_is_not_a_probability() -> None:
         "daily_return": 0.04,
         "breakout_20d": True,
         "breakdown_20d": False,
+        "return_60d": 0.12,
+        "return_120d": 0.24,
+        "return_200d": 0.35,
     }
     smc = {"bullish_points": 15, "bearish_points": 0}
     market = {"regime": "bullish"}
-    sector = {"relative_strength_vs_nepse_20d": 0.04}
+    sector = {
+        "relative_strength_vs_nepse_20d": 0.04,
+        "relative_strength_vs_nepse_60d": 0.07,
+        "relative_strength_vs_nepse_120d": 0.11,
+    }
 
     result = _score_signal(indicators, smc, market, sector)
 
@@ -230,12 +237,19 @@ def test_weighted_score_model_handles_bearish_evidence() -> None:
         "daily_return": -0.04,
         "breakout_20d": False,
         "breakdown_20d": True,
+        "return_60d": -0.10,
+        "return_120d": -0.20,
+        "return_200d": -0.30,
     }
     result = _score_signal(
         indicators,
         {"bullish_points": 0, "bearish_points": 15},
         {"regime": "bearish"},
-        {"relative_strength_vs_nepse_20d": -0.05},
+        {
+            "relative_strength_vs_nepse_20d": -0.05,
+            "relative_strength_vs_nepse_60d": -0.08,
+            "relative_strength_vs_nepse_120d": -0.12,
+        },
     )
     assert result["sell_score"] == 100
     assert result["buy_score"] == 0
