@@ -1017,11 +1017,11 @@ def _historical_event_study(
                 sell_following[str(horizon)].append(exit_close / float(entry_open) - 1.0)
 
     summary: dict[str, Any] = {}
-    for horizon, values in outcomes.items():
-        benchmark_values = benchmark_outcomes[horizon]
-        excess_values = excess_outcomes[horizon]
-        sell_values = sell_following[horizon]
-        summary[f"forward_{horizon}d"] = {
+    for horizon_key, values in outcomes.items():
+        benchmark_values = benchmark_outcomes[horizon_key]
+        excess_values = excess_outcomes[horizon_key]
+        sell_values = sell_following[horizon_key]
+        summary[f"forward_{horizon_key}d"] = {
             "sample_count": len(values),
             "win_rate": (
                 sum(1 for value in values if value > 0) / len(values) if values else None
@@ -1622,7 +1622,12 @@ class StockSectorResearchService:
                 "retracement_50_0": round(high60_value - 0.5 * fib_range, 2),
                 "retracement_61_8": round(high60_value - 0.618 * fib_range, 2),
             }
-            if fib_range is not None and fib_range > 0
+            if (
+                high60_value is not None
+                and low60_value is not None
+                and fib_range is not None
+                and fib_range > 0
+            )
             else {}
         )
         return {
