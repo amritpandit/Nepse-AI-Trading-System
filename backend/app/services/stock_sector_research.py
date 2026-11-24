@@ -97,24 +97,118 @@ def _adx_series(
     low: np.ndarray,
     period: int = 14,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return Wilder ATR, +DI, -DI and ADX series for completed OHLC bars."""
-    # Standard Wilder-smoothed ATR, directional movement and ADX.
+    """Return Wilder-smoothed ATR, +DI, -DI and ADX for completed OHLC bars."""
+    size = close.size
+    true_range = np.full(size, np.nan, dtype=float)
+    plus_dm = np.zeros(size, dtype=float)
+    minus_dm = np.zeros(size, dtype=float)
+    if size:
+        true_range[0] = high[0] - low[0]
+    if size > 1:
+        true_range[1:] = np.maximum.reduce(
+            [
+                high[1:] - low[1:],
+                np.abs(high[1:] - close[:-1]),
+                np.abs(low[1:] - close[:-1]),
+            ]
+        )
+        up_move = high[1:] - high[:-1]
+        down_move = low[:-1] - low[1:]
+        plus_dm[1:] = np.where(
+            (up_move > down_move) & (up_move > 0), up_move, 0.0
+        )
+        minus_dm[1:] = np.where(
+            (down_move > up_move) & (down_move > 0), down_move, 0.0
+        )
+
+    atr = _wilder(true_range, period)
+    smoothed_plus_dm = _wilder(plus_dm, period)
+    smoothed_minus_dm = _wilder(minus_dm, period)
+    plus_di = np.full(size, np.nan, dtype=float)
+    minus_di = np.full(size, np.nan, dtype=float)
+    valid_atr = np.isfinite(atr) & (atr > 0)
+    plus_di[valid_atr] = 100.0 * smoothed_plus_dm[valid_atr] / atr[valid_atr]
+    minus_di[valid_atr] = 100.0 * smoothed_minus_dm[valid_atr] / atr[valid_atr]
+
+    di_sum = plus_di + minus_di
+    dx = np.full(size, np.nan, dtype=float)
+    valid_di = np.isfinite(di_sum) & (di_sum > 0)
+    dx[valid_di] = (
+        100.0
+        * np.abs(plus_di[valid_di] - minus_di[valid_di])
+        / di_sum[valid_di]
+    )
+    adx = _wilder(dx, period)
+    return atr, plus_di, minus_di, adx
+
+
+def _valid_history(rows: list[Price]) -> list[Price]:
+    """Keep rows with complete, positive closing prices and valid OHLC fields."""
+    return [
+        row
+        for row in rows
+        if row.close is not None
+        and float(row.close) > 0
+        and row.open is not None
+        and row.high is not None
+        and row.low is not None
+    ]
+
+
+def _clean_after_latest_discontinuity(
+    rows: list[Price],
+) -> tuple[list[Price], dict[str, Any]]:
+    """Return observations after the latest material raw-price discontinuity."""
+    if len(rows) < 2:
+        return rows, {"flagged": False, "event_date": None}
+    event_index: int | None = None
+    for index in range(1, len(rows)):
+        previous = float(rows[index - 1].close)
+        current = float(rows[index].close)
+        if previous > 0 and abs(current / previous - 1.0) > DISCONTINUITY_THRESHOLD:
+            event_index = index
+    if event_index is None:
+        return rows, {"flagged": False, "event_date": None}
+    return rows[event_index:], {
+        "flagged": True,
+        "event_date": rows[event_index].date.isoformat(),
+        "reason": "Possible corporate action or abnormal source price jump",
+    }
+
+
+def _indicator_snapshot(rows: list[Price]) -> dict[str, Any]:
+    """Calculate the latest stock indicators from completed, valid OHLCV bars."""
+    if not rows:
+        raise ValueError("At least one valid price row is required")
+
+    close = np.asarray([float(row.close) for row in rows], dtype=float)
+    high = np.asarray([float(row.high) for row in rows], dtype=float)
+    low = np.asarray([float(row.low) for row in rows], dtype=float)
+    volume = np.asarray([float(row.volume or 0) for row in rows], dtype=float)
+
+    sma20 = _sma(close, 20)
+    sma50 = _sma(close, 50)
+    sma200 = _sma(close, 200)
+    ema12 = _ema(close, 12)
+    ema26 = _ema(close, 26)
+    macd = ema12 - ema26
+    macd_signal = _ema(macd, 9)
+    rsi = _rsi(close, 14)
     atr14, plus_di, minus_di, adx14 = _adx_series(close, high, low, 14)
 
-    # Stochastic oscillator (%K/%D) identifies the close within the recent range.
     stoch_k = np.full(close.shape, np.nan, dtype=float)
     stoch_d = np.full(close.shape, np.nan, dtype=float)
     for index in range(13, close.size):
         highest = float(np.max(high[index - 13 : index + 1]))
         lowest = float(np.min(low[index - 13 : index + 1]))
         stoch_k[index] = (
-            50.0 if highest == lowest
+            50.0
+            if highest == lowest
             else 100.0 * (close[index] - lowest) / (highest - lowest)
         )
         if index >= 15:
             stoch_d[index] = float(np.mean(stoch_k[index - 2 : index + 1]))
 
-    # On-balance volume tracks whether volume accompanies up- or down-closes.
     obv = np.zeros(close.shape, dtype=float)
     for index in range(1, close.size):
         if close[index] > close[index - 1]:
@@ -126,7 +220,9 @@ def _adx_series(
     obv_sma20 = _sma(obv, 20)
     obv_rising = bool(close.size >= 20 and obv[-1] > obv[-20])
 
-    prior_avg_volume20 = float(np.mean(volume[-21:-1])) if volume.size >= 21 else None
+    prior_avg_volume20 = (
+        float(np.mean(volume[-21:-1])) if volume.size >= 21 else None
+    )
     volume_ratio = (
         float(volume[-1] / prior_avg_volume20)
         if prior_avg_volume20 is not None and prior_avg_volume20 > 0
@@ -134,42 +230,80 @@ def _adx_series(
     )
     previous_high20 = float(np.max(high[-21:-1])) if close.size >= 21 else None
     previous_low20 = float(np.min(low[-21:-1])) if close.size >= 21 else None
-    current_hist = float(macd[-1] - macd_signal[-1]) if np.isfinite(macd[-1]) and np.isfinite(macd_signal[-1]) else None
-    previous_hist = float(macd[-2] - macd_signal[-2]) if close.size >= 2 and np.isfinite(macd[-2]) and np.isfinite(macd_signal[-2]) else None
+    current_hist = (
+        float(macd[-1] - macd_signal[-1])
+        if np.isfinite(macd[-1]) and np.isfinite(macd_signal[-1])
+        else None
+    )
+    previous_hist = (
+        float(macd[-2] - macd_signal[-2])
+        if close.size >= 2
+        and np.isfinite(macd[-2])
+        and np.isfinite(macd_signal[-2])
+        else None
+    )
     average_turnover20 = _sma(close * volume, 20)
-    daily_return = float(close[-1] / close[-2] - 1.0) if close.size >= 2 and close[-2] > 0 else None
+    daily_return = (
+        float(close[-1] / close[-2] - 1.0)
+        if close.size >= 2 and close[-2] > 0
+        else None
+    )
     bollinger_mid = float(sma20[-1]) if np.isfinite(sma20[-1]) else None
-    bollinger_std = float(np.std(close[-20:], ddof=0)) if close.size >= 20 else None
+    bollinger_std = (
+        float(np.std(close[-20:], ddof=0)) if close.size >= 20 else None
+    )
     previous_open = float(rows[-2].open) if len(rows) >= 2 else None
     previous_close = float(close[-2]) if close.size >= 2 else None
     current_open = float(rows[-1].open)
     current_high = float(high[-1])
     current_low = float(low[-1])
     current_close = float(close[-1])
-    previous_bearish = previous_open is not None and previous_close is not None and previous_close < previous_open
-    previous_bullish = previous_open is not None and previous_close is not None and previous_close > previous_open
+    previous_bearish = (
+        previous_open is not None
+        and previous_close is not None
+        and previous_close < previous_open
+    )
+    previous_bullish = (
+        previous_open is not None
+        and previous_close is not None
+        and previous_close > previous_open
+    )
     current_bullish = current_close > current_open
     current_bearish = current_close < current_open
     bullish_engulfing = (
-        previous_bearish and current_bullish
+        previous_bearish
+        and current_bullish
         and current_open <= float(previous_close)
         and current_close >= float(previous_open)
     )
     bearish_engulfing = (
-        previous_bullish and current_bearish
+        previous_bullish
+        and current_bearish
         and current_open >= float(previous_close)
         and current_close <= float(previous_open)
     )
     candle_body = abs(current_close - current_open)
     lower_wick = min(current_open, current_close) - current_low
     upper_wick = current_high - max(current_open, current_close)
-    hammer = candle_body > 0 and lower_wick >= 2 * candle_body and upper_wick <= candle_body
-    shooting_star = candle_body > 0 and upper_wick >= 2 * candle_body and lower_wick <= candle_body
+    hammer = (
+        candle_body > 0
+        and lower_wick >= 2 * candle_body
+        and upper_wick <= candle_body
+    )
+    shooting_star = (
+        candle_body > 0
+        and upper_wick >= 2 * candle_body
+        and lower_wick <= candle_body
+    )
     return {
         "close": float(close[-1]),
         "sma_20": float(sma20[-1]) if np.isfinite(sma20[-1]) else None,
-        "previous_sma_20": float(sma20[-2]) if sma20.size >= 2 and np.isfinite(sma20[-2]) else None,
-        "previous_close": float(close[-2]) if close.size >= 2 else None,
+        "previous_sma_20": (
+            float(sma20[-2])
+            if sma20.size >= 2 and np.isfinite(sma20[-2])
+            else None
+        ),
+        "previous_close": previous_close,
         "sma_50": float(sma50[-1]) if np.isfinite(sma50[-1]) else None,
         "sma_200": float(sma200[-1]) if np.isfinite(sma200[-1]) else None,
         "rsi_14": float(rsi[-1]) if np.isfinite(rsi[-1]) else None,
@@ -178,21 +312,39 @@ def _adx_series(
         "adx_14": float(adx14[-1]) if np.isfinite(adx14[-1]) else None,
         "plus_di_14": float(plus_di[-1]) if np.isfinite(plus_di[-1]) else None,
         "minus_di_14": float(minus_di[-1]) if np.isfinite(minus_di[-1]) else None,
-        "obv": float(obv[-1]) if close.size else 0.0,
+        "obv": float(obv[-1]),
         "obv_sma_20": float(obv_sma20[-1]) if np.isfinite(obv_sma20[-1]) else None,
         "obv_rising_20d": obv_rising,
         "macd": float(macd[-1]) if np.isfinite(macd[-1]) else None,
-        "macd_signal": float(macd_signal[-1]) if np.isfinite(macd_signal[-1]) else None,
+        "macd_signal": (
+            float(macd_signal[-1]) if np.isfinite(macd_signal[-1]) else None
+        ),
         "macd_histogram": current_hist,
         "previous_macd_histogram": previous_hist,
         "atr_14": float(atr14[-1]) if np.isfinite(atr14[-1]) else None,
         "bollinger_middle": bollinger_mid,
-        "bollinger_upper": bollinger_mid + 2 * bollinger_std if bollinger_mid is not None and bollinger_std is not None else None,
-        "bollinger_lower": bollinger_mid - 2 * bollinger_std if bollinger_mid is not None and bollinger_std is not None else None,
-        "average_traded_value_20d": float(average_turnover20[-1]) if average_turnover20.size and np.isfinite(average_turnover20[-1]) else None,
+        "bollinger_upper": (
+            bollinger_mid + 2 * bollinger_std
+            if bollinger_mid is not None and bollinger_std is not None
+            else None
+        ),
+        "bollinger_lower": (
+            bollinger_mid - 2 * bollinger_std
+            if bollinger_mid is not None and bollinger_std is not None
+            else None
+        ),
+        "average_traded_value_20d": (
+            float(average_turnover20[-1])
+            if average_turnover20.size and np.isfinite(average_turnover20[-1])
+            else None
+        ),
         "daily_return": daily_return,
-        "breakout_20d": previous_high20 is not None and close[-1] > previous_high20,
-        "breakdown_20d": previous_low20 is not None and close[-1] < previous_low20,
+        "breakout_20d": (
+            previous_high20 is not None and close[-1] > previous_high20
+        ),
+        "breakdown_20d": (
+            previous_low20 is not None and close[-1] < previous_low20
+        ),
         "bullish_engulfing": bullish_engulfing,
         "bearish_engulfing": bearish_engulfing,
         "hammer": hammer,
@@ -208,7 +360,6 @@ def _adx_series(
         "return_200d": float(close[-1] / close[-201] - 1.0) if close.size >= 201 else None,
         "bars": int(close.size),
     }
-
 
 
 def _smc_snapshot(rows: list[Price]) -> dict[str, Any]:
