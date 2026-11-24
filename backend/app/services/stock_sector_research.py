@@ -1520,7 +1520,9 @@ class StockSectorResearchService:
         ).all()
         market = _market_regime(self.session)
         sectors = self._sector_summary(stocks, market_context=market)
-        histories = self._load_histories(stocks, 800)
+        # A bulk scan needs 200-session trend/momentum plus a 220-bar chart;
+        # detailed single-stock research loads the longer 800-session validation window.
+        histories = self._load_histories(stocks, 260)
         benchmark_rows = self.session.scalars(
             sa.select(NEPSEIndex).order_by(NEPSEIndex.date.desc()).limit(800)
         ).all()
