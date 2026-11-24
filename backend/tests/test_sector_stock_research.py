@@ -315,6 +315,7 @@ def test_chart_series_contains_candles_trend_macd_and_rsi(db_session: Session) -
     assert indicators["stoch_d_3"] is not None
     assert indicators["obv"] is not None
     assert len(chart) == 220
+    json.dumps(chart, allow_nan=False)
     assert {
         "open", "high", "low", "close", "volume", "sma_20", "sma_50", "sma_200",
         "macd", "macd_signal", "rsi_14", "adx_14", "stoch_k_14", "stoch_d_3", "obv",
