@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import statistics
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import numpy as np
@@ -1401,7 +1402,8 @@ class StockSectorResearchService:
                 and volume_ratio >= 1.2
             )
         )
-        latest_age_days = max((date.today() - clean[-1].date).days, 0)
+        nepal_today = datetime.now(ZoneInfo("Asia/Kathmandu")).date()
+        latest_age_days = max((nepal_today - clean[-1].date).days, 0)
         data_freshness = "current" if latest_age_days <= 7 else "stale"
 
         trigger = "HOLD"
@@ -1412,6 +1414,7 @@ class StockSectorResearchService:
             "sector_history_available": sector_rs is not None,
             "sector_not_underperforming": sector_rs is not None and sector_rs >= 0,
             "at_least_50_clean_sessions": len(clean) >= 50,
+            "at_least_200_clean_sessions_for_medium_term_momentum": len(clean) >= 200,
             "no_recent_price_discontinuity": (
                 not discontinuity["flagged"] or len(clean) >= 200
             ),
@@ -1438,6 +1441,7 @@ class StockSectorResearchService:
             sell_score >= 65
             and -score_margin >= 25
             and sell_price_confirmation
+            and len(clean) >= 200
             and data_freshness == "current"
         ):
             trigger = "SELL_TRIGGER"
