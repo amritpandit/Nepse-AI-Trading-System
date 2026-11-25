@@ -9,6 +9,7 @@ import numpy as np
 import sqlalchemy as sa
 from app.core.security import get_current_user
 from app.db.session import get_db
+from app.models.price import Price
 from app.models.signal import Signal
 from app.models.stock import Stock
 from app.models.user import User
@@ -16,6 +17,7 @@ from app.schemas.signals import ProviderQuotaResponse, ProviderQuotaSummaryRespo
 from app.services.data_quality_gate import DataQualityGateError
 from app.services.feature import FeatureService
 from app.services.provider_quota import ProviderQuotaService
+from app.services.quant_signal_engine import score_ohlcv
 from app.services.risk_manager import PositionSizingRequest, RiskManager
 from app.services.signal_backfill import SignalBackfillService
 from app.services.signal_fusion import SignalFusionEngine
@@ -276,6 +278,56 @@ async def fuse_signal(
         "stream_delivered": delivered,
     }
     return response
+
+
+@router.get("/quant-score/{symbol}")
+def get_quant_score(
+    symbol: str,
+    user: CurrentUser,
+    db: DbSession,
+    data_trust_score: float | None = Query(default=None, ge=0.0, le=1.0),
+) -> dict:
+    """Return an explainable OHLCV/SMC score. Advisory only; never places orders."""
+    normalized_symbol = symbol.strip().upper()
+    stock = db.scalar(sa.select(Stock).where(Stock.symbol == normalized_symbol))
+    if stock is None:
+        raise HTTPException(status_code=404, detail="Unknown NEPSE symbol.")
+
+    price_rows = db.scalars(
+        sa.select(Price)
+        .where(Price.stock_id == stock.id)
+        .order_by(Price.date.desc())
+        .limit(120)
+    ).all()
+    price_rows = list(reversed(price_rows))
+    candles = [
+        {
+            "open": float(row.open),
+            "high": float(row.high),
+            "low": float(row.low),
+            "close": float(row.close),
+            "volume": float(row.volume or 0),
+        }
+        for row in price_rows
+        if None not in (row.open, row.high, row.low, row.close)
+    ]
+    if len(candles) < 35:
+        raise HTTPException(
+            status_code=422,
+            detail="At least 35 complete OHLCV records are required for quant scoring.",
+        )
+
+    try:
+        result = score_ohlcv(candles, data_trust_score=data_trust_score)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result["symbol"] = normalized_symbol
+    result["as_of"] = price_rows[-1].date.isoformat()
+    result["data_quality"]["trust_score_source"] = (
+        "caller_supplied" if data_trust_score is not None else "not_supplied"
+    )
+    return result
 
 
 @router.post("/demo-broadcast")
