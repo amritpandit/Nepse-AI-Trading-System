@@ -1,6 +1,7 @@
 import logging
 from typing import Annotated, Literal
 
+import httpx
 import sqlalchemy as sa
 from app.core.security import get_current_user
 from app.db.session import get_db
@@ -11,6 +12,7 @@ from app.schemas.ingestion import IngestionRequest
 from app.schemas.market import PriceIngestRequest, PriceResponse
 from app.services.csv_ingestion import CsvIngestionService
 from app.services.market import ingest_price, list_prices
+from app.services.nepal_market_data import NepalMarketDataImporter
 from app.services.yonepse_market import (
     MarketDataUnavailable,
     yonepse_market_data,
@@ -80,6 +82,56 @@ def ingest_batch(
         dry_run=payload.dry_run,
     )
     return {"symbol": symbol.upper() if symbol else "ALL", **result}
+
+
+@router.post("/research-data/equities/sync")
+def sync_research_equities(
+    user: CurrentUser,
+    db: DbSession,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    batch_size: Annotated[int, Query(ge=1, le=15)] = 5,
+    symbols: list[str] | None = Query(default=None),
+    start_date: str | None = None,
+    end_date: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Import a bounded batch of listed ordinary shares from the public history dataset."""
+    importer = NepalMarketDataImporter(session=db)
+    try:
+        return importer.sync_equities(
+            offset=offset,
+            batch_size=batch_size,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+            dry_run=dry_run,
+        )
+    except (ValueError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        importer.close()
+
+
+@router.post("/research-data/index/sync")
+def sync_research_index(
+    user: CurrentUser,
+    db: DbSession,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Import NEPSE Index history as a benchmark series, never as a tradable stock."""
+    importer = NepalMarketDataImporter(session=db)
+    try:
+        return importer.sync_nepse_index(
+            start_date=start_date,
+            end_date=end_date,
+            dry_run=dry_run,
+        )
+    except (ValueError, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        importer.close()
 
 
 @router.get("/live")

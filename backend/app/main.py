@@ -34,6 +34,7 @@ from app.api.routes.market import router as market_router
 from app.api.routes.mlops import router as mlops_router
 from app.api.routes.paper_trading import router as paper_trading_router
 from app.api.routes.portfolio import router as portfolio_router
+from app.api.routes.research import router as research_router
 from app.api.routes.signals import router as signals_router
 from app.api.routes.strategies import router as strategies_router
 from app.api.routes.streaming import router as streaming_router
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(strategies_router)
     app.include_router(lstm.router)
     app.include_router(portfolio_router)
+    app.include_router(research_router)
     app.include_router(paper_trading_router)
     app.include_router(streaming_router)
     app.include_router(explainability_router)

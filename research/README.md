@@ -1,11 +1,12 @@
 # Research
 
-Research notebooks and experimental workflows for strategy development.
+Research notebooks, strategy experiments and the documented market/sector/stock scoring methodology.
 
 ## Structure
 
 ```
 research/
+├── SCORING_METHODOLOGY.md
 ├── notebooks/
 │   ├── README.md
 │   ├── 01_idea_to_backtest.ipynb
@@ -13,6 +14,12 @@ research/
 │   └── 03_integrate_bundle.ipynb
 └── README.md
 ```
+
+## Live research scoring
+
+The dashboard's Sector & Stock Research page uses the documented 100-point BUY/SELL evidence model in [SCORING_METHODOLOGY.md](SCORING_METHODOLOGY.md). It combines NEPSE market regime, multi-horizon sector relative strength, 60/120/200-session stock momentum, trend structure, RSI/Stochastic, MACD, volume/OBV, price action and lower-weight SMC OHLC proxies.
+
+The NEPSE Index is a benchmark only. It is not a tradable instrument in this app. A BUY trigger is not an order; a SELL trigger is a review/exit alert for an existing long holding. SMC labels are deterministic chart proxies, not verified institutional order flow.
 
 ## Workflow
 
